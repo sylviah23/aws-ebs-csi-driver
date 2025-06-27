@@ -1,11 +1,10 @@
-package patch
+package metadata
 
 import (
 	"context"
 	json "encoding/json"
 	"strconv"
 
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/kubernetes-sigs/aws-ebs-csi-driver/pkg/cloud"
 	v1 "k8s.io/api/core/v1"
@@ -21,19 +20,10 @@ type ENIsVolumes struct {
 	Volumes int
 }
 
-func UpdateMetadataEC2(kubeclient kubernetes.Interface) error {
+func UpdateMetadataEC2(kubeclient kubernetes.Interface, c cloud.EC2API, region string) error {
 	nodes, _ := kubeclient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
-	region := nodes.Items[0].GetLabels()[v1.LabelTopologyRegion] // We assume every node in the cluster has the same region
-	cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(region))
 
-	if err != nil {
-		klog.ErrorS(err, "unable to load SDK config")
-		return err
-	}
-
-	svc := ec2.NewFromConfig(cfg)
-
-	ENIsVolumeMap, err := GetMetadata(svc, region)
+	ENIsVolumeMap, err := GetMetadata(c, region, nodes)
 	if err != nil {
 		klog.ErrorS(err, "unable to get ENI/Volume count")
 		return err
@@ -46,8 +36,13 @@ func UpdateMetadataEC2(kubeclient kubernetes.Interface) error {
 	return nil
 }
 
-func GetMetadata(client cloud.EC2API, region string) (map[string]ENIsVolumes, error) {
-	resp, err := client.DescribeInstances(context.TODO(), &ec2.DescribeInstancesInput{})
+func GetMetadata(client cloud.EC2API, region string, nodes *v1.NodeList) (map[string]ENIsVolumes, error) {
+	var nodeIds []string
+	for _, node := range nodes.Items {
+		nodeIds = append(nodeIds, node.Name)
+	}
+
+	resp, err := client.DescribeInstances(context.TODO(), &ec2.DescribeInstancesInput{InstanceIds: nodeIds})
 	if err != nil {
 		klog.ErrorS(err, "failed to describe instances")
 		return nil, err

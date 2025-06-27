@@ -1,4 +1,4 @@
-package patch
+package metadata
 
 import (
 	"context"
@@ -11,11 +11,12 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/kubernetes-sigs/aws-ebs-csi-driver/pkg/cloud"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-func newFakeInstance(instanceID string, numENIs int, numVolumes int) types.Instance {
+func newFakeInstance(instanceID string, numENIs, numVolumes int) types.Instance {
 	return types.Instance{
 		InstanceId:          &instanceID,
 		BlockDeviceMappings: make([]types.InstanceBlockDeviceMapping, numVolumes),
@@ -27,12 +28,25 @@ func TestGetMetadata(t *testing.T) {
 	testCases := []struct {
 		name             string
 		instances        []types.Instance
+		nodes            *v1.NodeList
 		expectedMetadata map[string]ENIsVolumes
 		expErr           error
 	}{
 		{
 			name:      "success: normal",
 			instances: []types.Instance{newFakeInstance("i-001", 1, 1), newFakeInstance("i-002", 2, 0)},
+			nodes: &corev1.NodeList{Items: []corev1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "i-001",
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "i-002",
+					},
+				},
+			}},
 			expectedMetadata: map[string]ENIsVolumes{
 				"i-001": {ENIs: 1, Volumes: 1},
 				"i-002": {ENIs: 2, Volumes: 0},
@@ -57,7 +71,7 @@ func TestGetMetadata(t *testing.T) {
 				tc.expErr,
 			)
 
-			ENIsVolumesMap, err := GetMetadata(mockEC2, "us-west-2")
+			ENIsVolumesMap, err := GetMetadata(mockEC2, "us-west-2", tc.nodes)
 			if err != nil {
 				if tc.expErr == nil {
 					t.Fatalf("GetMetadata() failed: expected no error, got: %v", err)
@@ -123,6 +137,7 @@ func TestPatchLabels(t *testing.T) {
 
 				expectedVolumes := strconv.Itoa(tc.ENIsVolumesMap[*tc.instance.InstanceId].Volumes)
 				gotVolumes := node.GetLabels()["num-volumes"]
+
 				if node.GetLabels()["num-ENIs"] != strconv.Itoa(tc.ENIsVolumesMap[*tc.instance.InstanceId].ENIs) {
 					t.Fatalf("PatchNodes() failed: expected %q ENIs, got %q", expectedENIs, gotENIs)
 				}
