@@ -144,6 +144,10 @@ func main() {
 	var md metadata.MetadataService
 	var metadataErr error
 
+	if options.Mode == driver.NodeMode {
+		time.Sleep(5e9) // TODO: for proof of concept remove later
+	}
+
 	if region != "" {
 		klog.InfoS("Region provided via AWS_REGION environment variable", "region", region)
 		if options.Mode != driver.ControllerMode {
@@ -183,6 +187,14 @@ func main() {
 	if err != nil {
 		klog.ErrorS(err, "failed to create cloud service")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	}
+
+	if options.Mode == driver.ControllerMode { // TODO: what to do in AllMode
+		clientset, _ := cfg.K8sAPIClient()
+		err := metadata.UpdateMetadataEC2(clientset, cloud.GetEC2(), region)
+		if err != nil {
+			klog.ErrorS(err, "unable to update ENI/Volume count on node labels")
+		}
 	}
 
 	m, err := mounter.NewNodeMounter(options.WindowsHostProcess)
