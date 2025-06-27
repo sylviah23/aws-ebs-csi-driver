@@ -141,27 +141,31 @@ func KubernetesAPIInstanceInfo(clientset kubernetes.Interface) (*Metadata, error
 	} else {
 		return nil, errors.New("could not retrieve AZ from topology label")
 	}
-	val := node.GetLabels()
+	val := node.GetLabels() // TODO: Delete for final PR
 	klog.V(1).InfoS("labels", "", val)
 
 	var volumes int
 	if val, ok := node.GetLabels()["num-volumes"]; ok {
 		volumes, err = strconv.Atoi(val)
 		if err != nil {
-			return nil, errors.New("failed to convert number of volumes label to int")
+			klog.ErrorS(err, "failed to convert number of volumes label to int, defaulting to 0 volumes")
+			volumes = 0
 		}
 	} else {
-		return nil, errors.New("could not retrieve num volumes from node label")
+		klog.ErrorS(err, "could not retrieve num volumes from node label, defaulting to 0 volumes")
+		volumes = 0
 	}
 
-	var ENIs int
+	var enis int
 	if val, ok := node.GetLabels()["num-ENIs"]; ok {
-		ENIs, err = strconv.Atoi(val)
+		enis, err = strconv.Atoi(val)
 		if err != nil {
-			return nil, errors.New("failed to convert number of ENIs label to int")
+			klog.ErrorS(err, "failed to convert number of ENIs label to int, defaulting to 1 ENI")
+			enis = 1
 		}
 	} else {
-		return nil, errors.New("could not retrieve num ENIs from node label")
+		klog.ErrorS(err, "could not retrieve num ENIs from node label, defaulting to 1 ENI")
+		enis = 1
 	}
 
 	instanceInfo := Metadata{
@@ -169,7 +173,7 @@ func KubernetesAPIInstanceInfo(clientset kubernetes.Interface) (*Metadata, error
 		InstanceType:           instanceType,
 		Region:                 region,
 		AvailabilityZone:       availabilityZone,
-		NumAttachedENIs:        ENIs,
+		NumAttachedENIs:        enis,
 		NumBlockDeviceMappings: volumes,
 	}
 
