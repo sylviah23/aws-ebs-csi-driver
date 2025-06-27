@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/kubernetes-sigs/aws-ebs-csi-driver/cmd/hooks"
-	"github.com/kubernetes-sigs/aws-ebs-csi-driver/cmd/patch"
 	"github.com/kubernetes-sigs/aws-ebs-csi-driver/pkg/cloud"
 	"github.com/kubernetes-sigs/aws-ebs-csi-driver/pkg/cloud/metadata"
 	"github.com/kubernetes-sigs/aws-ebs-csi-driver/pkg/driver"
@@ -145,15 +144,8 @@ func main() {
 	var md metadata.MetadataService
 	var metadataErr error
 
-	switch options.Mode {
-	case driver.NodeMode:
+	if options.Mode == driver.NodeMode {
 		time.Sleep(5e9) // TODO: for proof of concept remove later
-	case driver.ControllerMode:
-		clientset, _ := cfg.K8sAPIClient()
-		err := patch.UpdateMetadataEC2(clientset)
-		if err != nil {
-			klog.ErrorS(err, "unable to update ENI/Volume count on node labels")
-		}
 	}
 
 	if region != "" {
@@ -195,6 +187,14 @@ func main() {
 	if err != nil {
 		klog.ErrorS(err, "failed to create cloud service")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	}
+
+	if options.Mode == driver.ControllerMode { // TODO: what to do in AllMode
+		clientset, _ := cfg.K8sAPIClient()
+		err := metadata.UpdateMetadataEC2(clientset, cloud.GetEC2(), region)
+		if err != nil {
+			klog.ErrorS(err, "unable to update ENI/Volume count on node labels")
+		}
 	}
 
 	m, err := mounter.NewNodeMounter(options.WindowsHostProcess)
