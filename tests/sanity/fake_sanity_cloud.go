@@ -131,6 +131,10 @@ func (d *fakeCloud) GetSnapshotByID(ctx context.Context, snapshotID string) (*cl
 	return snapshot, nil
 }
 
+func (d *fakeCloud) GetEC2() cloud.EC2API {
+	return nil
+}
+
 func (d *fakeCloud) GetSnapshotByName(ctx context.Context, name string) (*cloud.Snapshot, error) {
 	if snapshotID, exists := d.snapshotNameToID[name]; exists {
 		return d.snapshots[snapshotID], nil

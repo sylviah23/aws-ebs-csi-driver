@@ -189,14 +189,6 @@ func main() {
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
-	if options.Mode == driver.ControllerMode { // TODO: what to do in AllMode
-		clientset, _ := cfg.K8sAPIClient()
-		err := metadata.UpdateMetadataEC2(clientset, cloud.GetEC2(), region)
-		if err != nil {
-			klog.ErrorS(err, "unable to update ENI/Volume count on node labels")
-		}
-	}
-
 	m, err := mounter.NewNodeMounter(options.WindowsHostProcess)
 	if err != nil {
 		klog.ErrorS(err, "failed to create node mounter")
@@ -206,6 +198,19 @@ func main() {
 	k8sClient, err := cfg.K8sAPIClient()
 	if err != nil {
 		klog.V(2).InfoS("Failed to setup k8s client", "err", err)
+	}
+
+	if options.Mode == driver.ControllerMode { // TODO: what to do in AllMode
+		nodes := metadata.GetNodes(k8sClient)
+		err := metadata.UpdateMetadataEC2(k8sClient, cloud.GetEC2(), region, nodes)
+		if err != nil {
+			klog.ErrorS(err, "unable to update ENI/Volume count on node labels")
+		}
+
+		informer := metadata.MetadataInformer(k8sClient, cloud.GetEC2(), region)
+		stopCh := make(chan struct{})
+		informer.Start(stopCh)
+		informer.WaitForCacheSync(stopCh)
 	}
 
 	drv, err := driver.NewDriver(cloud, &options, m, md, k8sClient)
