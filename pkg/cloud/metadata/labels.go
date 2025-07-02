@@ -20,7 +20,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/kubernetes-sigs/aws-ebs-csi-driver/pkg/cloud"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,7 +37,7 @@ type enisVolumes struct {
 	Volumes int
 }
 
-func MetadataInformer(clientset kubernetes.Interface, cloud cloud.EC2API, region string) informers.SharedInformerFactory {
+func MetadataInformer(clientset kubernetes.Interface, cloud cloud.Cloud, region string) informers.SharedInformerFactory {
 	factory := informers.NewSharedInformerFactory(clientset, 0)
 	nodesInformer := factory.Core().V1().Nodes().Informer()
 	var handler cache.ResourceEventHandlerFuncs
@@ -65,7 +65,7 @@ func GetNodes(kubeclient kubernetes.Interface) *v1.NodeList {
 	return nodes
 }
 
-func UpdateMetadataEC2(kubeclient kubernetes.Interface, c cloud.EC2API, region string, nodes *v1.NodeList) error {
+func UpdateMetadataEC2(kubeclient kubernetes.Interface, c cloud.Cloud, region string, nodes *v1.NodeList) error {
 	ENIsVolumeMap, err := GetMetadata(c, region, nodes)
 	if err != nil {
 		klog.ErrorS(err, "unable to get ENI/Volume count")
@@ -89,33 +89,42 @@ func parseNode(providerID string) string {
 	return ""
 }
 
-func GetMetadata(client cloud.EC2API, region string, nodes *v1.NodeList) (map[string]enisVolumes, error) {
+func GetMetadata(client cloud.Cloud, region string, nodes *v1.NodeList) (map[string]enisVolumes, error) {
 	nodeIds := make([]string, 0, len(nodes.Items))
 	for _, node := range nodes.Items {
 		nodeIds = append(nodeIds, parseNode(node.Spec.ProviderID))
 	}
 
-	resp, err := client.DescribeInstances(context.TODO(), &ec2.DescribeInstancesInput{InstanceIds: nodeIds})
+	var resp *ec2types.Instance
+	var err error
+	var respList []*ec2types.Instance
+
+	if len(nodeIds) > 1 {
+		respList, err = client.GetInstances(context.TODO(), nodeIds)
+	} else {
+		resp, err = client.GetInstance(context.TODO(), nodeIds[0])
+		respList = []*ec2types.Instance{resp}
+	}
+
 	if err != nil {
 		klog.ErrorS(err, "failed to describe instances")
 		return nil, err
 	}
 
 	ENIsVolumesMap := make(map[string]enisVolumes)
-	for _, reservation := range resp.Reservations {
-		for _, instance := range reservation.Instances {
-			numAttachedENIs := 1
-			if instance.NetworkInterfaces != nil {
-				numAttachedENIs = len(instance.NetworkInterfaces)
-			}
-			numBlockDeviceMappings := 0
-			if instance.BlockDeviceMappings != nil {
-				numBlockDeviceMappings = len(instance.BlockDeviceMappings)
-			}
-			instanceID := *instance.InstanceId
-			ENIsVolumesMap[instanceID] = enisVolumes{ENIs: numAttachedENIs, Volumes: numBlockDeviceMappings}
+	for _, instance := range respList {
+		numAttachedENIs := 1
+		if instance.NetworkInterfaces != nil {
+			numAttachedENIs = len(instance.NetworkInterfaces)
 		}
+		numBlockDeviceMappings := 0
+		if instance.BlockDeviceMappings != nil {
+			numBlockDeviceMappings = len(instance.BlockDeviceMappings)
+		}
+		instanceID := *instance.InstanceId
+		ENIsVolumesMap[instanceID] = enisVolumes{ENIs: numAttachedENIs, Volumes: numBlockDeviceMappings}
 	}
+
 	return ENIsVolumesMap, nil
 }
 

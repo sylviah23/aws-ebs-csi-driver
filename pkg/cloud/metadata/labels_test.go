@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/golang/mock/gomock"
 	"github.com/kubernetes-sigs/aws-ebs-csi-driver/pkg/cloud"
@@ -61,16 +60,10 @@ func TestMetadataInformer(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			mockCtrl := gomock.NewController(t)
-			mockEC2 := cloud.NewMockEC2API(mockCtrl)
+			mockCloud := cloud.NewMockCloud(mockCtrl)
 
-			mockEC2.EXPECT().DescribeInstances(gomock.Any(), gomock.Any()).Return(
-				&ec2.DescribeInstancesOutput{
-					Reservations: []types.Reservation{
-						{
-							Instances: []types.Instance{newFakeInstance("i-001", 2, 2)},
-						},
-					},
-				},
+			mockCloud.EXPECT().GetInstance(gomock.Any(), gomock.Any()).Return(
+				newFakeInstance("i-001", 2, 2),
 				tc.expErr,
 			)
 
@@ -89,7 +82,7 @@ func TestMetadataInformer(t *testing.T) {
 				close(watcherStarted)
 				return true, watch, nil
 			})
-			informer := MetadataInformer(clientset, mockEC2, "us-west-2")
+			informer := MetadataInformer(clientset, mockCloud, "us-west-2")
 			informer.Start(ctx.Done())
 			cache.WaitForCacheSync(ctx.Done())
 			<-watcherStarted
@@ -112,8 +105,8 @@ func TestMetadataInformer(t *testing.T) {
 	}
 }
 
-func newFakeInstance(instanceID string, numENIs, numVolumes int) types.Instance {
-	return types.Instance{
+func newFakeInstance(instanceID string, numENIs, numVolumes int) *types.Instance {
+	return &types.Instance{
 		InstanceId:          &instanceID,
 		BlockDeviceMappings: make([]types.InstanceBlockDeviceMapping, numVolumes),
 		NetworkInterfaces:   make([]types.InstanceNetworkInterface, numENIs),
@@ -123,14 +116,14 @@ func newFakeInstance(instanceID string, numENIs, numVolumes int) types.Instance 
 func TestGetMetadata(t *testing.T) {
 	testCases := []struct {
 		name             string
-		instances        []types.Instance
+		instances        []*types.Instance
 		nodes            *corev1.NodeList
 		expectedMetadata map[string]enisVolumes
 		expErr           error
 	}{
 		{
 			name:      "success: normal",
-			instances: []types.Instance{newFakeInstance("i-001", 1, 1), newFakeInstance("i-002", 2, 0)},
+			instances: []*types.Instance{newFakeInstance("i-001", 1, 1), newFakeInstance("i-002", 2, 0)},
 			nodes: &corev1.NodeList{Items: []corev1.Node{
 				{
 					ObjectMeta: metav1.ObjectMeta{
@@ -154,20 +147,14 @@ func TestGetMetadata(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			mockCtrl := gomock.NewController(t)
-			mockEC2 := cloud.NewMockEC2API(mockCtrl)
+			mockCloud := cloud.NewMockCloud(mockCtrl)
 
-			mockEC2.EXPECT().DescribeInstances(gomock.Any(), gomock.Any()).Return(
-				&ec2.DescribeInstancesOutput{
-					Reservations: []types.Reservation{
-						{
-							Instances: tc.instances,
-						},
-					},
-				},
+			mockCloud.EXPECT().GetInstances(gomock.Any(), gomock.Any()).Return(
+				tc.instances,
 				tc.expErr,
 			)
 
-			ENIsVolumesMap, err := GetMetadata(mockEC2, "us-west-2", tc.nodes)
+			ENIsVolumesMap, err := GetMetadata(mockCloud, "us-west-2", tc.nodes)
 			if err != nil {
 				if tc.expErr == nil {
 					t.Fatalf("GetMetadata() failed: expected no error, got: %v", err)

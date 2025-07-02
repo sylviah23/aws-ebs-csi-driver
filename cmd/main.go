@@ -204,7 +204,7 @@ func main() {
 		ticker := time.NewTicker(60 * time.Minute)
 		updateMetadata := func() {
 			nodes := metadata.GetNodes(k8sClient)
-			err := metadata.UpdateMetadataEC2(k8sClient, cloud.GetEC2(), region, nodes)
+			err := metadata.UpdateMetadataEC2(k8sClient, cloud, region, nodes)
 			if err != nil {
 				klog.ErrorS(err, "unable to update ENI/Volume count on node labels")
 			}
@@ -218,7 +218,7 @@ func main() {
 			}
 		}()
 
-		informer := metadata.MetadataInformer(k8sClient, cloud.GetEC2(), region)
+		informer := metadata.MetadataInformer(k8sClient, cloud, region)
 		stopCh := make(chan struct{})
 		informer.Start(stopCh)
 		informer.WaitForCacheSync(stopCh)

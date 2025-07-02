@@ -180,11 +180,11 @@ func getENIs(node *corev1.Node) int {
 		enis, err = strconv.Atoi(val)
 		if err != nil {
 			klog.ErrorS(err, "failed to convert number of ENIs label to int, defaulting to 1 ENI")
-			enis = 0
+			enis = 1
 		}
 	} else {
 		klog.V(2).InfoS("num-ENIs label not found on node, defaulting to 1 ENI")
-		enis = 0
+		enis = 1
 	}
 	return enis
 }

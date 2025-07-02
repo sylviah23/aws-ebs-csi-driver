@@ -913,7 +913,7 @@ func (c *cloud) batchDescribeInstances(request *ec2.DescribeInstancesInput) (*ty
 }
 
 func (c *cloud) AttachDisk(ctx context.Context, volumeID, nodeID string) (string, error) {
-	instance, err := c.getInstance(ctx, nodeID)
+	instance, err := c.GetInstance(ctx, nodeID)
 	if err != nil {
 		return "", err
 	}
@@ -973,7 +973,7 @@ func (c *cloud) AttachDisk(ctx context.Context, volumeID, nodeID string) (string
 }
 
 func (c *cloud) DetachDisk(ctx context.Context, volumeID, nodeID string) error {
-	instance, err := c.getInstance(ctx, nodeID)
+	instance, err := c.GetInstance(ctx, nodeID)
 	if err != nil {
 		return err
 	}
@@ -1645,7 +1645,7 @@ func describeInstances(ctx context.Context, svc EC2API, request *ec2.DescribeIns
 	return instances, nil
 }
 
-func (c *cloud) getInstance(ctx context.Context, nodeID string) (*types.Instance, error) {
+func (c *cloud) GetInstance(ctx context.Context, nodeID string) (*types.Instance, error) {
 	request := &ec2.DescribeInstancesInput{
 		InstanceIds: []string{nodeID},
 	}
@@ -1666,6 +1666,28 @@ func (c *cloud) getInstance(ctx context.Context, nodeID string) (*types.Instance
 	} else {
 		return c.batchDescribeInstances(request)
 	}
+}
+
+func (c *cloud) GetInstances(ctx context.Context, nodeIDs []string) ([]*types.Instance, error) {
+	request := &ec2.DescribeInstancesInput{
+		InstanceIds: nodeIDs,
+	}
+
+	instances := []*types.Instance{}
+	response, err := c.ec2.DescribeInstances(ctx, request)
+	if err != nil {
+		if isAWSErrorInstanceNotFound(err) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("error listing AWS instances: %w", err)
+	}
+
+	for _, reservation := range response.Reservations {
+		for _, instance := range reservation.Instances {
+			instances = append(instances, &instance)
+		}
+	}
+	return instances, nil
 }
 
 func describeSnapshots(ctx context.Context, svc EC2API, request *ec2.DescribeSnapshotsInput) ([]types.Snapshot, error) {
