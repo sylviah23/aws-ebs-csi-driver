@@ -141,32 +141,9 @@ func KubernetesAPIInstanceInfo(clientset kubernetes.Interface) (*Metadata, error
 	} else {
 		return nil, errors.New("could not retrieve AZ from topology label")
 	}
-	val := node.GetLabels() // TODO: Delete for final PR
-	klog.V(1).InfoS("labels", "", val)
 
-	var volumes int
-	if val, ok := node.GetLabels()["num-volumes"]; ok {
-		volumes, err = strconv.Atoi(val)
-		if err != nil {
-			klog.ErrorS(err, "failed to convert number of volumes label to int, defaulting to 0 volumes")
-			volumes = 0
-		}
-	} else {
-		klog.ErrorS(err, "could not retrieve num volumes from node label, defaulting to 0 volumes")
-		volumes = 0
-	}
-
-	var enis int
-	if val, ok := node.GetLabels()["num-ENIs"]; ok {
-		enis, err = strconv.Atoi(val)
-		if err != nil {
-			klog.ErrorS(err, "failed to convert number of ENIs label to int, defaulting to 1 ENI")
-			enis = 1
-		}
-	} else {
-		klog.ErrorS(err, "could not retrieve num ENIs from node label, defaulting to 1 ENI")
-		enis = 1
-	}
+	enis := getENIs(node)
+	volumes := getVolumes(node)
 
 	instanceInfo := Metadata{
 		InstanceID:             instanceID,
@@ -178,4 +155,36 @@ func KubernetesAPIInstanceInfo(clientset kubernetes.Interface) (*Metadata, error
 	}
 
 	return &instanceInfo, nil
+}
+
+func getVolumes(node *corev1.Node) int {
+	var volumes int
+	if val, ok := node.GetLabels()["num-volumes"]; ok {
+		var err error
+		volumes, err = strconv.Atoi(val)
+		if err != nil {
+			klog.ErrorS(err, "failed to convert number of volumes label to int, defaulting to 0 volumes")
+			volumes = 0
+		}
+	} else {
+		klog.V(2).InfoS("num-volumes label not found on node, defaulting to 0 volumes")
+		volumes = 0
+	}
+	return volumes
+}
+
+func getENIs(node *corev1.Node) int {
+	var enis int
+	if val, ok := node.GetLabels()["num-ENIs"]; ok {
+		var err error
+		enis, err = strconv.Atoi(val)
+		if err != nil {
+			klog.ErrorS(err, "failed to convert number of ENIs label to int, defaulting to 1 ENI")
+			enis = 0
+		}
+	} else {
+		klog.V(2).InfoS("num-ENIs label not found on node, defaulting to 1 ENI")
+		enis = 0
+	}
+	return enis
 }

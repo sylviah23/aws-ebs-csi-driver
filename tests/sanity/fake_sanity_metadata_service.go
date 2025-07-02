@@ -34,7 +34,7 @@ func newFakeMetadataService(id string, r string, az string, oa arn.ARN) *fakeMet
 	}
 }
 
-func (m *fakeMetadataService) UpdateMetadata() error {
+func (m *fakeMetadataService) UpdateMetadata(string) error {
 	return nil
 }
 

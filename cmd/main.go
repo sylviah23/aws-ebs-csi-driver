@@ -201,11 +201,22 @@ func main() {
 	}
 
 	if options.Mode == driver.ControllerMode { // TODO: what to do in AllMode
-		nodes := metadata.GetNodes(k8sClient)
-		err := metadata.UpdateMetadataEC2(k8sClient, cloud.GetEC2(), region, nodes)
-		if err != nil {
-			klog.ErrorS(err, "unable to update ENI/Volume count on node labels")
+		ticker := time.NewTicker(60 * time.Minute)
+		updateMetadata := func() {
+			nodes := metadata.GetNodes(k8sClient)
+			err := metadata.UpdateMetadataEC2(k8sClient, cloud.GetEC2(), region, nodes)
+			if err != nil {
+				klog.ErrorS(err, "unable to update ENI/Volume count on node labels")
+			}
 		}
+
+		go func() {
+			defer ticker.Stop()
+			updateMetadata()
+			for range ticker.C {
+				updateMetadata()
+			}
+		}()
 
 		informer := metadata.MetadataInformer(k8sClient, cloud.GetEC2(), region)
 		stopCh := make(chan struct{})

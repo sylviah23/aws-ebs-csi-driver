@@ -17,10 +17,13 @@ limitations under the License.
 package metadata
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
 
@@ -90,9 +93,26 @@ func NewMetadataService(cfg MetadataServiceConfig, region string) (MetadataServi
 
 // UpdateMetadata refreshes ENI information.
 // We do not refresh blockDeviceMappings because IMDS only reports data from when instance starts (As of April 2025).
-func (m *Metadata) UpdateMetadata() error {
+func (m *Metadata) UpdateMetadata(kubeconfig string) error {
 	if m.IMDSClient == nil {
-		// IMDS not available, skip updates
+		k8sClient, err := DefaultKubernetesAPIClient(kubeconfig)()
+
+		if err != nil {
+			klog.V(2).InfoS("Failed to setup k8s client", "err", err)
+		}
+
+		nodeName := os.Getenv("CSI_NODE_NAME")
+		if nodeName == "" {
+			return errors.New("CSI_NODE_NAME env var not set")
+		}
+
+		node, err := k8sClient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+
+		m.NumAttachedENIs = getENIs(node)
+		m.NumBlockDeviceMappings = getVolumes(node)
 		return nil
 	}
 

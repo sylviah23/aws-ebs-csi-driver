@@ -30,7 +30,7 @@ type MetadataService interface {
 	GetNumAttachedENIs() int
 	GetNumBlockDeviceMappings() int
 	GetOutpostArn() arn.ARN
-	UpdateMetadata() error
+	UpdateMetadata(kubeconfig string) error
 }
 
 type IMDS interface {

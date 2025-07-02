@@ -135,17 +135,17 @@ func (mr *MockMetadataServiceMockRecorder) GetRegion() *gomock.Call {
 }
 
 // UpdateMetadata mocks base method.
-func (m *MockMetadataService) UpdateMetadata() error {
+func (m *MockMetadataService) UpdateMetadata(kubeconfig string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateMetadata")
+	ret := m.ctrl.Call(m, "UpdateMetadata", kubeconfig)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateMetadata indicates an expected call of UpdateMetadata.
-func (mr *MockMetadataServiceMockRecorder) UpdateMetadata() *gomock.Call {
+func (mr *MockMetadataServiceMockRecorder) UpdateMetadata(kubeconfig interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateMetadata", reflect.TypeOf((*MockMetadataService)(nil).UpdateMetadata))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateMetadata", reflect.TypeOf((*MockMetadataService)(nil).UpdateMetadata), kubeconfig)
 }
 
 // MockIMDS is a mock of IMDS interface.

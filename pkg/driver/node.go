@@ -576,7 +576,7 @@ func (d *NodeService) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetC
 func (d *NodeService) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
 	klog.V(4).InfoS("NodeGetInfo: called", "args", req)
 
-	if err := d.metadata.UpdateMetadata(); err != nil {
+	if err := d.metadata.UpdateMetadata(d.options.Kubeconfig); err != nil {
 		klog.ErrorS(err, "Failed to update metadata, using cached values")
 	}
 
