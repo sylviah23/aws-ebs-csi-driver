@@ -82,7 +82,7 @@ func TestMetadataInformer(t *testing.T) {
 				close(watcherStarted)
 				return true, watch, nil
 			})
-			informer := MetadataInformer(clientset, mockCloud, "us-west-2")
+			informer := MetadataInformer(clientset, mockCloud)
 			informer.Start(ctx.Done())
 			cache.WaitForCacheSync(ctx.Done())
 			<-watcherStarted
@@ -154,7 +154,7 @@ func TestGetMetadata(t *testing.T) {
 				tc.expErr,
 			)
 
-			ENIsVolumesMap, err := GetMetadata(mockCloud, "us-west-2", tc.nodes)
+			ENIsVolumesMap, err := getMetadata(mockCloud, tc.nodes)
 			if err != nil {
 				if tc.expErr == nil {
 					t.Fatalf("GetMetadata() failed: expected no error, got: %v", err)
@@ -203,7 +203,7 @@ func TestPatchLabels(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			clientset := fake.NewSimpleClientset(&tc.node)
-			err := PatchNodes(&corev1.NodeList{Items: []corev1.Node{tc.node}}, tc.ENIsVolumesMap, clientset)
+			err := patchNodes(&corev1.NodeList{Items: []corev1.Node{tc.node}}, tc.ENIsVolumesMap, clientset)
 			if err != nil {
 				if tc.expErr == nil {
 					t.Fatalf("PatchNodes() failed: expected no error, got: %v", err)

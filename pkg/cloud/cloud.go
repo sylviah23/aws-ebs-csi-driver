@@ -384,10 +384,6 @@ func newEC2Cloud(region string, awsSdkDebugLog bool, userAgentExtra string, batc
 	}
 }
 
-func (c *cloud) GetEC2() EC2API {
-	return c.ec2
-}
-
 // newBatcherManager initializes a new instance of batcherManager.
 // Each batcher's `entries` set to maximum results returned by relevant EC2 API call without pagination.
 // Each batcher's `delay` minimizes RPC latency and EC2 API calls. Tuned via scalability tests.
@@ -1645,6 +1641,7 @@ func describeInstances(ctx context.Context, svc EC2API, request *ec2.DescribeIns
 	return instances, nil
 }
 
+// GetInstance returns the instances of a single node.
 func (c *cloud) GetInstance(ctx context.Context, nodeID string) (*types.Instance, error) {
 	request := &ec2.DescribeInstancesInput{
 		InstanceIds: []string{nodeID},
@@ -1668,6 +1665,7 @@ func (c *cloud) GetInstance(ctx context.Context, nodeID string) (*types.Instance
 	}
 }
 
+// GetInstances returns the instances of multiple nodes.
 func (c *cloud) GetInstances(ctx context.Context, nodeIDs []string) ([]*types.Instance, error) {
 	request := &ec2.DescribeInstancesInput{
 		InstanceIds: nodeIDs,

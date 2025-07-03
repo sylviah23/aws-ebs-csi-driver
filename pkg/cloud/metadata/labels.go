@@ -37,7 +37,8 @@ type enisVolumes struct {
 	Volumes int
 }
 
-func MetadataInformer(clientset kubernetes.Interface, cloud cloud.Cloud, region string) informers.SharedInformerFactory {
+// MetadataInformer returns an informer factory that patches metadata labels for new nodes that join the cluster.
+func MetadataInformer(clientset kubernetes.Interface, cloud cloud.Cloud) informers.SharedInformerFactory {
 	factory := informers.NewSharedInformerFactory(clientset, 0)
 	nodesInformer := factory.Core().V1().Nodes().Informer()
 	var handler cache.ResourceEventHandlerFuncs
@@ -46,7 +47,7 @@ func MetadataInformer(clientset kubernetes.Interface, cloud cloud.Cloud, region 
 			node := &v1.NodeList{
 				Items: []v1.Node{*nodeObj},
 			}
-			err := UpdateMetadataEC2(clientset, cloud, region, node)
+			err := UpdateMetadataEC2(clientset, cloud, node)
 			if err != nil {
 				klog.ErrorS(err, "unable to update ENI/Volume count on node labels", "node", node.Items[0].Name)
 			}
@@ -60,19 +61,25 @@ func MetadataInformer(clientset kubernetes.Interface, cloud cloud.Cloud, region 
 	return factory
 }
 
-func GetNodes(kubeclient kubernetes.Interface) *v1.NodeList {
-	nodes, _ := kubeclient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
-	return nodes
+// GetNodes returns the nodes in the cluster.
+func GetNodes(kubeclient kubernetes.Interface) (*v1.NodeList, error) {
+	nodes, err := kubeclient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		klog.ErrorS(err, "could not get nodes")
+		return nil, err
+	}
+	return nodes, nil
 }
 
-func UpdateMetadataEC2(kubeclient kubernetes.Interface, c cloud.Cloud, region string, nodes *v1.NodeList) error {
-	ENIsVolumeMap, err := GetMetadata(c, region, nodes)
+// UpdateMetadataEC2 patches the metadata labels of each node in the cluster to include labels for volume count and ENI count.
+func UpdateMetadataEC2(kubeclient kubernetes.Interface, c cloud.Cloud, nodes *v1.NodeList) error {
+	ENIsVolumeMap, err := getMetadata(c, nodes)
 	if err != nil {
 		klog.ErrorS(err, "unable to get ENI/Volume count")
 		return err
 	}
 
-	err = PatchNodes(nodes, ENIsVolumeMap, kubeclient)
+	err = patchNodes(nodes, ENIsVolumeMap, kubeclient)
 	if err != nil {
 		return err
 	}
@@ -89,7 +96,7 @@ func parseNode(providerID string) string {
 	return ""
 }
 
-func GetMetadata(client cloud.Cloud, region string, nodes *v1.NodeList) (map[string]enisVolumes, error) {
+func getMetadata(client cloud.Cloud, nodes *v1.NodeList) (map[string]enisVolumes, error) {
 	nodeIds := make([]string, 0, len(nodes.Items))
 	for _, node := range nodes.Items {
 		nodeIds = append(nodeIds, parseNode(node.Spec.ProviderID))
@@ -128,7 +135,7 @@ func GetMetadata(client cloud.Cloud, region string, nodes *v1.NodeList) (map[str
 	return ENIsVolumesMap, nil
 }
 
-func PatchNodes(nodes *v1.NodeList, enisVolumeMap map[string]enisVolumes, clientset kubernetes.Interface) error {
+func patchNodes(nodes *v1.NodeList, enisVolumeMap map[string]enisVolumes, clientset kubernetes.Interface) error {
 	for _, node := range nodes.Items {
 		newNode := node.DeepCopy()
 		numAttachedENIs := enisVolumeMap[parseNode(node.Spec.ProviderID)].ENIs
