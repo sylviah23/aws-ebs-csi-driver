@@ -1641,7 +1641,7 @@ func describeInstances(ctx context.Context, svc EC2API, request *ec2.DescribeIns
 	return instances, nil
 }
 
-// GetInstance returns the instances of a single node.
+// GetInstance returns the instance info associated with a single node ID.
 func (c *cloud) GetInstance(ctx context.Context, nodeID string) (*types.Instance, error) {
 	request := &ec2.DescribeInstancesInput{
 		InstanceIds: []string{nodeID},
@@ -1665,13 +1665,15 @@ func (c *cloud) GetInstance(ctx context.Context, nodeID string) (*types.Instance
 	}
 }
 
-// GetInstances returns the instances of multiple nodes.
+// GetInstances returns the instance info associated with each node ID in `nodeIDs`.
 func (c *cloud) GetInstances(ctx context.Context, nodeIDs []string) ([]*types.Instance, error) {
 	request := &ec2.DescribeInstancesInput{
 		InstanceIds: nodeIDs,
 	}
 
 	instances := []*types.Instance{}
+	// A batcher isn't used here because GetInstances is only called once in awhile to update
+	// metadata labels of each node.
 	response, err := c.ec2.DescribeInstances(ctx, request)
 	if err != nil {
 		if isAWSErrorInstanceNotFound(err) {

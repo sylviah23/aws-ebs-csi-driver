@@ -24,6 +24,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 )
 
@@ -93,14 +94,8 @@ func NewMetadataService(cfg MetadataServiceConfig, region string) (MetadataServi
 
 // UpdateMetadata refreshes ENI information.
 // We do not refresh blockDeviceMappings because IMDS only reports data from when instance starts (As of April 2025).
-func (m *Metadata) UpdateMetadata(kubeconfig string) error {
+func (m *Metadata) UpdateMetadata(k8sClient kubernetes.Interface) error {
 	if m.IMDSClient == nil {
-		k8sClient, err := DefaultKubernetesAPIClient(kubeconfig)()
-
-		if err != nil {
-			klog.V(2).InfoS("Failed to setup k8s client", "err", err)
-		}
-
 		nodeName := os.Getenv("CSI_NODE_NAME")
 		if nodeName == "" {
 			return errors.New("CSI_NODE_NAME env var not set")
