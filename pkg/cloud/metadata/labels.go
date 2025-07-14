@@ -19,6 +19,7 @@ import (
 	json "encoding/json"
 	"strconv"
 	"strings"
+	"time"
 
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/kubernetes-sigs/aws-ebs-csi-driver/pkg/cloud"
@@ -37,8 +38,26 @@ type enisVolumes struct {
 	Volumes int
 }
 
-// MetadataInformer returns an informer factory that patches metadata labels for new nodes that join the cluster.
-func MetadataInformer(clientset kubernetes.Interface, cloud cloud.Cloud) informers.SharedInformerFactory {
+// ContinuousUpdateLabels is a go routine that updates the metadata labels of each node once every
+// `updateTime` minutes and uses an informer to update the labels of new nodes that join the cluster.
+func ContinuousUpdateLabels(k8sClient kubernetes.Interface, cloud cloud.Cloud, updateTime int) {
+	informer := metadataInformer(k8sClient, cloud)
+	stopCh := make(chan struct{})
+	informer.Start(stopCh)
+	informer.WaitForCacheSync(stopCh)
+
+	ticker := time.NewTicker(time.Duration(updateTime) * time.Minute)
+	go func() {
+		defer ticker.Stop()
+		updateLabels(k8sClient, cloud)
+		for range ticker.C {
+			updateLabels(k8sClient, cloud)
+		}
+	}()
+}
+
+// metadataInformer returns an informer factory that patches metadata labels for new nodes that join the cluster.
+func metadataInformer(clientset kubernetes.Interface, cloud cloud.Cloud) informers.SharedInformerFactory {
 	factory := informers.NewSharedInformerFactory(clientset, 0)
 	nodesInformer := factory.Core().V1().Nodes().Informer()
 	var handler cache.ResourceEventHandlerFuncs
@@ -47,7 +66,7 @@ func MetadataInformer(clientset kubernetes.Interface, cloud cloud.Cloud) informe
 			node := &v1.NodeList{
 				Items: []v1.Node{*nodeObj},
 			}
-			err := UpdateMetadataEC2(clientset, cloud, node)
+			err := updateMetadataEC2(clientset, cloud, node)
 			if err != nil {
 				klog.ErrorS(err, "unable to update ENI/Volume count on node labels", "node", node.Items[0].Name)
 			}
@@ -61,8 +80,19 @@ func MetadataInformer(clientset kubernetes.Interface, cloud cloud.Cloud) informe
 	return factory
 }
 
-// GetNodes returns the nodes in the cluster.
-func GetNodes(kubeclient kubernetes.Interface) (*v1.NodeList, error) {
+func updateLabels(k8sClient kubernetes.Interface, cloud cloud.Cloud) {
+	nodes, err := getNodes(k8sClient)
+	if err != nil {
+		klog.ErrorS(err, "could not get nodes")
+		return
+	}
+	err = updateMetadataEC2(k8sClient, cloud, nodes)
+	if err != nil {
+		klog.ErrorS(err, "unable to update ENI/Volume count on node labels")
+	}
+}
+
+func getNodes(kubeclient kubernetes.Interface) (*v1.NodeList, error) {
 	nodes, err := kubeclient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		klog.ErrorS(err, "could not get nodes")
@@ -71,8 +101,7 @@ func GetNodes(kubeclient kubernetes.Interface) (*v1.NodeList, error) {
 	return nodes, nil
 }
 
-// UpdateMetadataEC2 patches the metadata labels of each node in the cluster to include labels for volume count and ENI count.
-func UpdateMetadataEC2(kubeclient kubernetes.Interface, c cloud.Cloud, nodes *v1.NodeList) error {
+func updateMetadataEC2(kubeclient kubernetes.Interface, c cloud.Cloud, nodes *v1.NodeList) error {
 	ENIsVolumeMap, err := getMetadata(c, nodes)
 	if err != nil {
 		klog.ErrorS(err, "unable to get ENI/Volume count")

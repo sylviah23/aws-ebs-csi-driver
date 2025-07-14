@@ -200,32 +200,8 @@ func main() {
 		klog.V(2).InfoS("Failed to setup k8s client", "err", err)
 	}
 
-	if options.Mode == driver.ControllerMode { // TODO: what to do in AllMode
-		ticker := time.NewTicker(60 * time.Minute)
-		updateMetadata := func() {
-			nodes, err := metadata.GetNodes(k8sClient)
-			if err != nil {
-				klog.ErrorS(err, "could not get nodes")
-				return
-			}
-			err = metadata.UpdateMetadataEC2(k8sClient, cloud, nodes)
-			if err != nil {
-				klog.ErrorS(err, "unable to update ENI/Volume count on node labels")
-			}
-		}
-
-		go func() {
-			defer ticker.Stop()
-			updateMetadata()
-			for range ticker.C {
-				updateMetadata()
-			}
-		}()
-
-		informer := metadata.MetadataInformer(k8sClient, cloud)
-		stopCh := make(chan struct{})
-		informer.Start(stopCh)
-		informer.WaitForCacheSync(stopCh)
+	if options.Mode == driver.ControllerMode {
+		metadata.ContinuousUpdateLabels(k8sClient, cloud, 60)
 	}
 
 	drv, err := driver.NewDriver(cloud, &options, m, md, k8sClient)

@@ -63,7 +63,7 @@ func TestMetadataInformer(t *testing.T) {
 			mockCloud := cloud.NewMockCloud(mockCtrl)
 
 			mockCloud.EXPECT().GetInstance(gomock.Any(), gomock.Any()).Return(
-				newFakeInstance("i-001", 2, 2),
+				newFakeInstance("i-001", tc.expectedMetadata[tc.newNode.Name].ENIs, tc.expectedMetadata[tc.newNode.Name].Volumes),
 				tc.expErr,
 			)
 
@@ -82,7 +82,7 @@ func TestMetadataInformer(t *testing.T) {
 				close(watcherStarted)
 				return true, watch, nil
 			})
-			informer := MetadataInformer(clientset, mockCloud)
+			informer := metadataInformer(clientset, mockCloud)
 			informer.Start(ctx.Done())
 			cache.WaitForCacheSync(ctx.Done())
 			<-watcherStarted
@@ -92,7 +92,7 @@ func TestMetadataInformer(t *testing.T) {
 				t.Fatalf("error injecting node add: %v", err)
 			}
 
-			time.Sleep(6e9)
+			time.Sleep(5e8)
 			node, _ := clientset.CoreV1().Nodes().Get(t.Context(), tc.newNode.Name, metav1.GetOptions{})
 
 			if node.GetLabels()["num-ENIs"] != strconv.Itoa(tc.expectedMetadata[node.Name].ENIs) {
@@ -122,7 +122,7 @@ func TestGetMetadata(t *testing.T) {
 		expErr           error
 	}{
 		{
-			name:      "success: normal",
+			name:      "success: normal with multiple instances",
 			instances: []*types.Instance{newFakeInstance("i-001", 1, 1), newFakeInstance("i-002", 2, 0)},
 			nodes: &corev1.NodeList{Items: []corev1.Node{
 				{
@@ -142,6 +142,21 @@ func TestGetMetadata(t *testing.T) {
 			},
 			expErr: nil,
 		},
+		{
+			name:      "success: normal with one instance",
+			instances: []*types.Instance{newFakeInstance("i-001", 5, 2)},
+			nodes: &corev1.NodeList{Items: []corev1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "i-001",
+					},
+				},
+			}},
+			expectedMetadata: map[string]enisVolumes{
+				"i-001": {ENIs: 5, Volumes: 2},
+			},
+			expErr: nil,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -149,10 +164,17 @@ func TestGetMetadata(t *testing.T) {
 			mockCtrl := gomock.NewController(t)
 			mockCloud := cloud.NewMockCloud(mockCtrl)
 
-			mockCloud.EXPECT().GetInstances(gomock.Any(), gomock.Any()).Return(
-				tc.instances,
-				tc.expErr,
-			)
+			if len(tc.instances) > 1 {
+				mockCloud.EXPECT().GetInstances(gomock.Any(), gomock.Any()).Return(
+					tc.instances,
+					tc.expErr,
+				)
+			} else {
+				mockCloud.EXPECT().GetInstance(gomock.Any(), gomock.Any()).Return(
+					tc.instances[0],
+					tc.expErr,
+				)
+			}
 
 			ENIsVolumesMap, err := getMetadata(mockCloud, tc.nodes)
 			if err != nil {
