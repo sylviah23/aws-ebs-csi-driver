@@ -169,8 +169,8 @@ func patchNodes(nodes *v1.NodeList, enisVolumeMap map[string]enisVolumes, client
 		newNode := node.DeepCopy()
 		numAttachedENIs := enisVolumeMap[parseNode(node.Spec.ProviderID)].ENIs
 		numBlockDeviceMappings := enisVolumeMap[parseNode(node.Spec.ProviderID)].Volumes
-		newNode.Labels["num-volumes"] = strconv.Itoa(numBlockDeviceMappings)
-		newNode.Labels["num-ENIs"] = strconv.Itoa(numAttachedENIs)
+		newNode.Labels["ebs.csi.aws.com/non-csi-ebs-volumes-count"] = strconv.Itoa(numBlockDeviceMappings)
+		newNode.Labels["ebs.csi.aws.com/num-enis"] = strconv.Itoa(numAttachedENIs)
 
 		oldData, err := json.Marshal(node)
 		if err != nil {
