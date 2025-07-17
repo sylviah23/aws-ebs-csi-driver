@@ -239,6 +239,12 @@ sub-push-a1compat:
 .PHONY: all-push
 all-push: sub-push sub-push-fips sub-push-a1compat
 
+# QUESTION: should my tests be run in the current CI jobs or a separate job
+
+.PHONY: sylvia-test
+sylvia-test:
+	cd tests/e2e && ginkgo -v -focus="Node labeling volumes and ENIs"
+
 test-e2e-%:
 	./hack/prow-e2e.sh test-e2e-$*
 
