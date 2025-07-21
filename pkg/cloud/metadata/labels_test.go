@@ -16,6 +16,7 @@ package metadata
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strconv"
 	"testing"
@@ -63,7 +64,7 @@ func TestMetadataInformer(t *testing.T) {
 			mockCloud := cloud.NewMockCloud(mockCtrl)
 
 			mockCloud.EXPECT().GetInstance(gomock.Any(), gomock.Any()).Return(
-				newFakeInstance("i-001", tc.expectedMetadata[tc.newNode.Name].ENIs, tc.expectedMetadata[tc.newNode.Name].Volumes),
+				newFakeInstance(tc.newNode.Name, tc.expectedMetadata[tc.newNode.Name].ENIs, tc.expectedMetadata[tc.newNode.Name].Volumes),
 				tc.expErr,
 			)
 
@@ -94,12 +95,26 @@ func TestMetadataInformer(t *testing.T) {
 
 			time.Sleep(5e8)
 			node, _ := clientset.CoreV1().Nodes().Get(t.Context(), tc.newNode.Name, metav1.GetOptions{})
+			if err != nil {
+				if tc.expErr == nil {
+					t.Fatalf("MetadataInformer() failed: expected no error, got: %v", err)
+				}
+				if err.Error() != tc.expErr.Error() {
+					t.Fatalf("MetadataInformer() failed: expected error %q, got %q", tc.expErr, err)
+				}
+			} else {
+				expectedENIs := strconv.Itoa(tc.expectedMetadata[tc.newNode.Name].ENIs)
+				expectedVol := strconv.Itoa(tc.expectedMetadata[node.Name].Volumes)
 
-			if node.GetLabels()["ebs.csi.aws.com/num-enis"] != strconv.Itoa(tc.expectedMetadata[node.Name].ENIs) {
-				t.Fatalf("PatchNodes() failed: expected %s ENIs, got %s", strconv.Itoa(tc.expectedMetadata[tc.newNode.Name].ENIs), node.GetLabels()["ebs.csi.aws.com/num-enis"])
-			}
-			if node.GetLabels()["ebs.csi.aws.com/non-csi-ebs-volumes-count"] != strconv.Itoa(tc.expectedMetadata[node.Name].Volumes) {
-				t.Fatalf("PatchNodes() failed: expected %s volumes, got %s", strconv.Itoa(tc.expectedMetadata[tc.newNode.Name].Volumes), node.GetLabels()["ebs.csi.aws.com/non-csi-ebs-volumes-count"])
+				labeledENIs := node.GetLabels()["ebs.csi.aws.com/num-enis"]
+				labeledVol := node.GetLabels()["ebs.csi.aws.com/non-csi-ebs-volumes-count"]
+
+				if labeledENIs != expectedENIs {
+					t.Fatalf("MetadataInformer() failed: expected %s ENIs, got %s", expectedENIs, labeledENIs)
+				}
+				if labeledVol != expectedVol {
+					t.Fatalf("MetadataInformer() failed: expected %s volumes, got %s", expectedVol, labeledVol)
+				}
 			}
 		})
 	}
@@ -156,6 +171,19 @@ func TestGetMetadata(t *testing.T) {
 				"i-001": {ENIs: 5, Volumes: 2},
 			},
 			expErr: nil,
+		},
+		{
+			name:      "error: describe instances error",
+			instances: []*types.Instance{newFakeInstance("i-001", 5, 2)},
+			nodes: &corev1.NodeList{Items: []corev1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "i-001",
+					},
+				},
+			}},
+			expectedMetadata: map[string]enisVolumes{},
+			expErr:           errors.New("failed to describe instances"),
 		},
 	}
 
