@@ -54,7 +54,7 @@ const (
 	ENIsLabel = "ebs.csi.aws.com/enis-count"
 )
 
-var _ = Describe("EBS CSI Driver Node Labeling", func() {
+var _ = Describe("[disruptive] EBS CSI Driver Node Labeling", func() {
 	f := framework.NewDefaultFramework("ebs")
 	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 

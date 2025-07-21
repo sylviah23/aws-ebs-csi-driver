@@ -3,7 +3,7 @@
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: ebs-csi-node-patcher-binding
+  name: label-patcher-binding
   labels:
     {{- include "aws-ebs-csi-driver.labels" . | nindent 4 }}
 subjects:
@@ -13,5 +13,5 @@ subjects:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: ebs-csi-node-patcher
+  name: label-patcher
 {{- end -}}

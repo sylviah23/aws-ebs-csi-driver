@@ -40,6 +40,11 @@ var (
 	featureGate = featuregate.NewFeatureGate()
 )
 
+const (
+	// Node labels will update volume and ENI count every `LabelRefreshTime` minutes
+	LabelRefreshTime = 60
+)
+
 func main() {
 	fs := flag.NewFlagSet("aws-ebs-csi-driver", flag.ExitOnError)
 	if err := logsapi.RegisterLogFormat(logsapi.JSONLogFormat, json.Factory{}, logsapi.LoggingBetaOptions); err != nil {
@@ -201,7 +206,7 @@ func main() {
 	}
 
 	if options.Mode == driver.ControllerMode {
-		metadata.ContinuousUpdateLabels(k8sClient, cloud, 60)
+		metadata.ContinuousUpdateLabels(k8sClient, cloud, LabelRefreshTime)
 	}
 
 	drv, err := driver.NewDriver(cloud, &options, m, md, k8sClient)

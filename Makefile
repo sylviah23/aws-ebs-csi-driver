@@ -243,7 +243,7 @@ all-push: sub-push sub-push-fips sub-push-a1compat
 
 .PHONY: sylvia-test
 sylvia-test:
-	cd tests/e2e && ginkgo -v -focus="Node labeling volumes and ENIs"
+	cd tests/e2e && ginkgo -v -focus="disruptive"
 
 test-e2e-%:
 	./hack/prow-e2e.sh test-e2e-$*

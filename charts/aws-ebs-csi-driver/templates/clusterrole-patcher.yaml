@@ -3,7 +3,7 @@
 kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: ebs-csi-node-patcher
+  name: label-patcher
 rules:
 - apiGroups: [""]
   resources: ["nodes"]
