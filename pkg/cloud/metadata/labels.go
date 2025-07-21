@@ -33,6 +33,14 @@ import (
 	"k8s.io/klog/v2"
 )
 
+const (
+	// VolumesLabel is the label name for the number of volumes on a node
+	VolumesLabel = "ebs.csi.aws.com/non-csi-ebs-volumes-count"
+
+	// ENIsLabel is the label name for the number of ENIs on a node
+	ENIsLabel = "ebs.csi.aws.com/enis-count"
+)
+
 type enisVolumes struct {
 	ENIs    int
 	Volumes int
@@ -41,12 +49,8 @@ type enisVolumes struct {
 // ContinuousUpdateLabels is a go routine that updates the metadata labels of each node once every
 // `updateTime` minutes and uses an informer to update the labels of new nodes that join the cluster.
 func ContinuousUpdateLabels(k8sClient kubernetes.Interface, cloud cloud.Cloud, updateTime int) {
-	informer := metadataInformer(k8sClient, cloud)
-	stopCh := make(chan struct{})
-	informer.Start(stopCh)
-	informer.WaitForCacheSync(stopCh)
-
 	ticker := time.NewTicker(time.Duration(updateTime) * time.Minute)
+
 	go func() {
 		defer ticker.Stop()
 		updateLabels(k8sClient, cloud)
@@ -54,6 +58,11 @@ func ContinuousUpdateLabels(k8sClient kubernetes.Interface, cloud cloud.Cloud, u
 			updateLabels(k8sClient, cloud)
 		}
 	}()
+
+	informer := metadataInformer(k8sClient, cloud)
+	stopCh := make(chan struct{})
+	informer.Start(stopCh)
+	informer.WaitForCacheSync(stopCh)
 }
 
 // metadataInformer returns an informer factory that patches metadata labels for new nodes that join the cluster.
@@ -137,7 +146,7 @@ func getMetadata(client cloud.Cloud, nodes *v1.NodeList) (map[string]enisVolumes
 
 	if len(nodeIds) > 1 {
 		respList, err = client.GetInstances(context.TODO(), nodeIds)
-	} else {
+	} else if len(nodeIds) == 1 {
 		resp, err = client.GetInstance(context.TODO(), nodeIds[0])
 		respList = []*ec2types.Instance{resp}
 	}
@@ -169,8 +178,8 @@ func patchNodes(nodes *v1.NodeList, enisVolumeMap map[string]enisVolumes, client
 		newNode := node.DeepCopy()
 		numAttachedENIs := enisVolumeMap[parseNode(node.Spec.ProviderID)].ENIs
 		numBlockDeviceMappings := enisVolumeMap[parseNode(node.Spec.ProviderID)].Volumes
-		newNode.Labels["ebs.csi.aws.com/non-csi-ebs-volumes-count"] = strconv.Itoa(numBlockDeviceMappings)
-		newNode.Labels["ebs.csi.aws.com/num-enis"] = strconv.Itoa(numAttachedENIs)
+		newNode.Labels[VolumesLabel] = strconv.Itoa(numBlockDeviceMappings)
+		newNode.Labels[ENIsLabel] = strconv.Itoa(numAttachedENIs)
 
 		oldData, err := json.Marshal(node)
 		if err != nil {

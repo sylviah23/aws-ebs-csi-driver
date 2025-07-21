@@ -106,8 +106,8 @@ func TestMetadataInformer(t *testing.T) {
 				expectedENIs := strconv.Itoa(tc.expectedMetadata[tc.newNode.Name].ENIs)
 				expectedVol := strconv.Itoa(tc.expectedMetadata[node.Name].Volumes)
 
-				labeledENIs := node.GetLabels()["ebs.csi.aws.com/num-enis"]
-				labeledVol := node.GetLabels()["ebs.csi.aws.com/non-csi-ebs-volumes-count"]
+				labeledENIs := node.GetLabels()[ENIsLabel]
+				labeledVol := node.GetLabels()[VolumesLabel]
 
 				if labeledENIs != expectedENIs {
 					t.Fatalf("MetadataInformer() failed: expected %s ENIs, got %s", expectedENIs, labeledENIs)
@@ -268,15 +268,15 @@ func TestPatchLabels(t *testing.T) {
 
 				node, _ := clientset.CoreV1().Nodes().Get(t.Context(), tc.node.Name, metav1.GetOptions{})
 				expectedENIs := strconv.Itoa(tc.ENIsVolumesMap[tc.node.Name].ENIs)
-				gotENIs := node.GetLabels()["ebs.csi.aws.com/num-enis"]
+				gotENIs := node.GetLabels()[ENIsLabel]
 
 				expectedVolumes := strconv.Itoa(tc.ENIsVolumesMap[tc.node.Name].Volumes)
-				gotVolumes := node.GetLabels()["ebs.csi.aws.com/non-csi-ebs-volumes-count"]
+				gotVolumes := node.GetLabels()[VolumesLabel]
 
-				if node.GetLabels()["ebs.csi.aws.com/num-enis"] != strconv.Itoa(tc.ENIsVolumesMap[tc.node.Name].ENIs) {
+				if node.GetLabels()[ENIsLabel] != strconv.Itoa(tc.ENIsVolumesMap[tc.node.Name].ENIs) {
 					t.Fatalf("PatchNodes() failed: expected %q ENIs, got %q", expectedENIs, gotENIs)
 				}
-				if node.GetLabels()["ebs.csi.aws.com/non-csi-ebs-volumes-count"] != strconv.Itoa(tc.ENIsVolumesMap[tc.node.Name].Volumes) {
+				if node.GetLabels()[VolumesLabel] != strconv.Itoa(tc.ENIsVolumesMap[tc.node.Name].Volumes) {
 					t.Fatalf("PatchNodes() failed: expected %q volumes, got %q", expectedVolumes, gotVolumes)
 				}
 			}

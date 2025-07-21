@@ -159,7 +159,7 @@ func KubernetesAPIInstanceInfo(clientset kubernetes.Interface) (*Metadata, error
 
 func getVolumes(node *corev1.Node) int {
 	var volumes int
-	if val, ok := node.GetLabels()["ebs.csi.aws.com/non-csi-ebs-volumes-count"]; ok {
+	if val, ok := node.GetLabels()[VolumesLabel]; ok {
 		var err error
 		volumes, err = strconv.Atoi(val)
 		if err != nil {
@@ -175,7 +175,7 @@ func getVolumes(node *corev1.Node) int {
 
 func getENIs(node *corev1.Node) int {
 	var enis int
-	if val, ok := node.GetLabels()["ebs.csi.aws.com/num-enis"]; ok {
+	if val, ok := node.GetLabels()[ENIsLabel]; ok {
 		var err error
 		enis, err = strconv.Atoi(val)
 		if err != nil {

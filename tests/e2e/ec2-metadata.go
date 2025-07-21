@@ -46,6 +46,14 @@ type metadata struct {
 	AvailabilityZone string
 }
 
+const (
+	// VolumesLabel is the label name for the number of volumes on a node
+	VolumesLabel = "ebs.csi.aws.com/non-csi-ebs-volumes-count"
+
+	// ENIsLabel is the label name for the number of ENIs on a node
+	ENIsLabel = "ebs.csi.aws.com/enis-count"
+)
+
 var _ = Describe("EBS CSI Driver Node Labeling", func() {
 	f := framework.NewDefaultFramework("ebs")
 	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
@@ -161,7 +169,7 @@ var _ = Describe("EBS CSI Driver Node Labeling", func() {
 				for _, node := range updatedNodes.Items {
 					id := parseNode(node.Spec.ProviderID)
 					if id == changedInstance {
-						volStr, ok := node.Labels["ebs.csi.aws.com/non-csi-ebs-volumes-count"]
+						volStr, ok := node.Labels[VolumesLabel]
 						if !ok {
 							return false
 						}
@@ -330,8 +338,8 @@ func deletePod(nodeID string, cs clientset.Interface) {
 
 func checkVolENI(expectedMetadata, labeledMetadata map[string]*metadata, nodes *corev1.NodeList) {
 	for _, node := range nodes.Items {
-		vol, _ := strconv.Atoi(node.GetLabels()["ebs.csi.aws.com/non-csi-ebs-volumes-count"])
-		enis, _ := strconv.Atoi(node.GetLabels()["ebs.csi.aws.com/num-enis"])
+		vol, _ := strconv.Atoi(node.GetLabels()[VolumesLabel])
+		enis, _ := strconv.Atoi(node.GetLabels()[ENIsLabel])
 		id := parseNode(node.Spec.ProviderID)
 		labeledMetadata[id] = &metadata{}
 		labeledMetadata[id].ENIs = enis
