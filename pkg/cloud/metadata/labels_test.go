@@ -64,7 +64,7 @@ func TestMetadataInformer(t *testing.T) {
 			mockCloud := cloud.NewMockCloud(mockCtrl)
 
 			mockCloud.EXPECT().GetInstance(gomock.Any(), gomock.Any()).Return(
-				newFakeInstance(tc.newNode.Name, tc.expectedMetadata[tc.newNode.Name].ENIs, tc.expectedMetadata[tc.newNode.Name].Volumes),
+				newFakeInstance(tc.newNode.Name, tc.expectedMetadata[tc.newNode.Name].ENIs, tc.expectedMetadata[tc.newNode.Name].Volumes+1),
 				tc.expErr,
 			)
 
@@ -138,7 +138,7 @@ func TestGetMetadata(t *testing.T) {
 	}{
 		{
 			name:      "success: normal with multiple instances",
-			instances: []*types.Instance{newFakeInstance("i-001", 1, 1), newFakeInstance("i-002", 2, 0)},
+			instances: []*types.Instance{newFakeInstance("i-001", 1, 1), newFakeInstance("i-002", 2, 3)},
 			nodes: &corev1.NodeList{Items: []corev1.Node{
 				{
 					ObjectMeta: metav1.ObjectMeta{
@@ -152,8 +152,8 @@ func TestGetMetadata(t *testing.T) {
 				},
 			}},
 			expectedMetadata: map[string]enisVolumes{
-				"i-001": {ENIs: 1, Volumes: 1},
-				"i-002": {ENIs: 2, Volumes: 0},
+				"i-001": {ENIs: 1, Volumes: 0},
+				"i-002": {ENIs: 2, Volumes: 2},
 			},
 			expErr: nil,
 		},
@@ -168,7 +168,7 @@ func TestGetMetadata(t *testing.T) {
 				},
 			}},
 			expectedMetadata: map[string]enisVolumes{
-				"i-001": {ENIs: 5, Volumes: 2},
+				"i-001": {ENIs: 5, Volumes: 1},
 			},
 			expErr: nil,
 		},

@@ -26,7 +26,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/kubernetes-sigs/aws-ebs-csi-driver/pkg/cloud"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -194,31 +193,10 @@ var _ = Describe("[disruptive] EBS CSI Driver Node Labeling", func() {
 })
 
 // getAllocatableCount returns the limit of volumes that the node supports.
-func getAllocatableCount(instanceType string, volumes, enis int) int32 {
-	isNitro := cloud.IsNitroInstanceType(instanceType)
-	availableAttachments := cloud.GetMaxAttachments(isNitro)
-	reservedVolumeAttachments := volumes + 1 // +1 for root device
-	dedicatedLimit := cloud.GetDedicatedLimitForInstanceType(instanceType)
-	maxEBSAttachments, hasMaxVolumeLimit := cloud.GetEBSLimitForInstanceType(instanceType)
-
-	if hasMaxVolumeLimit {
-		availableAttachments = min(maxEBSAttachments, availableAttachments)
-	}
-	if dedicatedLimit != 0 {
-		availableAttachments = dedicatedLimit
-	} else if isNitro {
-		reservedSlots := cloud.GetReservedSlotsForInstanceType(instanceType)
-		if hasMaxVolumeLimit {
-			availableAttachments = availableAttachments - (enis - 1) - reservedSlots
-		} else {
-			availableAttachments = availableAttachments - enis - reservedSlots
-		}
-	}
-	availableAttachments -= reservedVolumeAttachments
-	if availableAttachments <= 0 {
-		availableAttachments = 1
-	}
-	return int32(availableAttachments)
+func getAllocatableCount(volumes, enis int) int32 {
+	// because the expected number of volumes attached does not incude the root volume, we need to subtract 1 from
+	// the allocatable count to account for this
+	return int32(28-volumes-enis) - 1
 }
 
 func parseNode(providerID string) string {
@@ -244,7 +222,8 @@ func getVolENIs(resp *ec2.DescribeInstancesOutput) map[string]*metadata {
 
 			numBlockDeviceMappings := 0
 			if instance.BlockDeviceMappings != nil {
-				numBlockDeviceMappings = len(instance.BlockDeviceMappings)
+				// we do not include the root volume in the expected number of volumes attached
+				numBlockDeviceMappings = len(instance.BlockDeviceMappings) - 1
 			}
 			expectedMetadata[instanceID] = &metadata{
 				ENIs:             numAttachedENIs,
@@ -366,7 +345,6 @@ func checkAllocatable(expectedMetadata, labeledMetadata map[string]*metadata, cs
 			labeledMetadata[nodeID].AllocatableCount = *driver.Allocatable.Count
 
 			expectedMetadata[nodeID].AllocatableCount = getAllocatableCount(
-				expectedMetadata[nodeID].InstanceType,
 				expectedMetadata[nodeID].Volumes,
 				expectedMetadata[nodeID].ENIs)
 

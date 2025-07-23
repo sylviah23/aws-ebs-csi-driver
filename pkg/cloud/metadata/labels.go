@@ -164,7 +164,8 @@ func getMetadata(client cloud.Cloud, nodes *v1.NodeList) (map[string]enisVolumes
 		}
 		numBlockDeviceMappings := 0
 		if instance.BlockDeviceMappings != nil {
-			numBlockDeviceMappings = len(instance.BlockDeviceMappings)
+			// -1 for root volume because we eventually add this back in when calculating allocatable count in getVolumesLimit()
+			numBlockDeviceMappings = len(instance.BlockDeviceMappings) - 1
 		}
 		instanceID := *instance.InstanceId
 		ENIsVolumesMap[instanceID] = enisVolumes{ENIs: numAttachedENIs, Volumes: numBlockDeviceMappings}
