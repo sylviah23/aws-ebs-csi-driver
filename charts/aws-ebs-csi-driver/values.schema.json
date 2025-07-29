@@ -1091,6 +1091,63 @@
             }
           }
         },
+        "patcher": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "additionalArgs": {
+              "type": "array",
+              "description": "Additional arguments passed to the patcher container",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "resources": {
+              "type": ["object", "null"],
+              "default": null
+            },
+            "logLevel": {
+              "type": "integer",
+              "description": "Set the level of verbosity of the logs",
+              "default": 4
+            },
+            "leaderElection": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false
+                }
+              }
+            },
+            "env": {
+              "type": "array",
+              "default": []
+            },
+            "image": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "pullPolicy": {
+                  "type": "string",
+                  "default": "IfNotPresent"
+                },
+                "tag": {
+                  "type": "string"
+                },
+                "repository": {
+                  "type": "string",
+                  "default": "public.ecr.aws/ebs-csi-driver/aws-ebs-csi-driver"
+                }
+              }
+            },
+            "securityContext": {
+              "type": "object"
+            }
+          }
+        },
         "volumemodifier": {
           "type": "object",
           "additionalProperties": false,

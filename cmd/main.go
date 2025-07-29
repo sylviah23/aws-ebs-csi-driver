@@ -41,7 +41,7 @@ var (
 )
 
 const (
-	// Node labels will update volume and ENI count every `LabelRefreshTime` minutes
+	// Node labels will update volume and ENI count every `LabelRefreshTime` minutes.
 	LabelRefreshTime = 60
 )
 
@@ -73,7 +73,7 @@ func main() {
 
 	switch cmd {
 	case "pre-stop-hook":
-		clientset, clientErr := metadata.DefaultKubernetesAPIClient(options.Kubeconfig)()
+		clientset, _, clientErr := metadata.DefaultKubernetesAPIClient(options.Kubeconfig)()
 		if clientErr != nil {
 			klog.ErrorS(err, "unable to communicate with k8s API")
 		} else {
@@ -86,8 +86,9 @@ func main() {
 		klog.FlushAndExit(klog.ExitFlushTimeout, 0)
 	case string(driver.ControllerMode), string(driver.NodeMode), string(driver.AllMode):
 		options.Mode = driver.Mode(cmd)
+	case "patcher":
 	default:
-		klog.Errorf("Unknown driver mode %s: Expected %s, %s, %s, or pre-stop-hook", cmd, driver.ControllerMode, driver.NodeMode, driver.AllMode)
+		klog.Errorf("Unknown driver mode %s: Expected %s, %s, %s, patcher, or pre-stop-hook", cmd, driver.ControllerMode, driver.NodeMode, driver.AllMode)
 		klog.FlushAndExit(klog.ExitFlushTimeout, 0)
 	}
 
@@ -149,10 +150,6 @@ func main() {
 	var md metadata.MetadataService
 	var metadataErr error
 
-	if options.Mode == driver.NodeMode {
-		time.Sleep(5e9) // TODO: for proof of concept remove later
-	}
-
 	if region != "" {
 		klog.InfoS("Region provided via AWS_REGION environment variable", "region", region)
 		if options.Mode != driver.ControllerMode {
@@ -200,13 +197,14 @@ func main() {
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
-	k8sClient, err := cfg.K8sAPIClient()
+	k8sClient, k8sConfig, err := cfg.K8sAPIClient()
 	if err != nil {
 		klog.V(2).InfoS("Failed to setup k8s client", "err", err)
 	}
 
-	if options.Mode == driver.ControllerMode {
-		metadata.ContinuousUpdateLabels(k8sClient, cloud, LabelRefreshTime)
+	// TODO: Question: should I put this in the same case statement as where we check for prestop hook
+	if cmd == "patcher" {
+		metadata.ContinuousUpdateLabelsLeaderElection(k8sClient, k8sConfig, md.GetInstanceID(), cloud, LabelRefreshTime)
 	}
 
 	drv, err := driver.NewDriver(cloud, &options, m, md, k8sClient)
