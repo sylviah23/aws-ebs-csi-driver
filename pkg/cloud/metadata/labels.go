@@ -29,15 +29,18 @@ import (
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/leaderelection"
+	rl "k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/klog/v2"
 )
 
 const (
-	// VolumesLabel is the label name for the number of volumes on a node
+	// VolumesLabel is the label name for the number of volumes on a node.
 	VolumesLabel = "ebs.csi.aws.com/non-csi-ebs-volumes-count"
 
-	// ENIsLabel is the label name for the number of ENIs on a node
+	// ENIsLabel is the label name for the number of ENIs on a node.
 	ENIsLabel = "ebs.csi.aws.com/enis-count"
 )
 
@@ -46,27 +49,136 @@ type enisVolumes struct {
 	Volumes int
 }
 
-// ContinuousUpdateLabels is a go routine that updates the metadata labels of each node once every
+// Uses leader election so that only one controller pod calls containuousUpdateLabels().
+func ContinuousUpdateLabelsLeaderElection(clientset kubernetes.Interface, k8sConfig *rest.Config, instanceID string, cloud cloud.Cloud, updateTime int) {
+	var (
+		lockName      = "my-lock"
+		lockNamespace = "kube-system"
+	)
+
+	l, err := rl.NewFromKubeconfig(
+		rl.LeasesResourceLock,
+		lockNamespace,
+		lockName,
+		rl.ResourceLockConfig{
+			Identity: instanceID, //TODO: question: what's a better identity to use
+		},
+		k8sConfig,
+		time.Second*10,
+	)
+	if err != nil {
+		panic(err)
+	}
+	el, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
+		Lock:          l,
+		LeaseDuration: time.Second * 15,
+		RenewDeadline: time.Second * 10,
+		RetryPeriod:   time.Second * 2,
+		Name:          lockName,
+		Callbacks: leaderelection.LeaderCallbacks{
+			OnStartedLeading: func(ctx context.Context) {
+				klog.InfoS("This controller is the leader for updating metadata labels")
+				continuousUpdateLabels(ctx, clientset, cloud, updateTime)
+			},
+			OnStoppedLeading: func() { klog.InfoS("This controller is no longer the leader for updating metadata labels") },
+			OnNewLeader:      func(identity string) { klog.InfoS("the leader for updating metadata labels is", "", identity) },
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	el.Run(context.Background())
+}
+
+// continuousUpdateLabels is a go routine that updates the metadata labels of each node once every
 // `updateTime` minutes and uses an informer to update the labels of new nodes that join the cluster.
-func ContinuousUpdateLabels(k8sClient kubernetes.Interface, cloud cloud.Cloud, updateTime int) {
+// A PV informer is also used to keep track of CSI managed volumes when updating labels to avoid
+// double counting.
+func continuousUpdateLabels(ctx context.Context, k8sClient kubernetes.Interface, cloud cloud.Cloud, updateTime int) {
+	pvInformerFactory, pvInformer := pvInformer(k8sClient)
+	pvInformerStopCh := make(chan struct{})
+	pvInformerFactory.Start(pvInformerStopCh)
+	pvInformerFactory.WaitForCacheSync(pvInformerStopCh)
+
 	ticker := time.NewTicker(time.Duration(updateTime) * time.Minute)
 
-	go func() {
-		defer ticker.Stop()
-		updateLabels(k8sClient, cloud)
-		for range ticker.C {
-			updateLabels(k8sClient, cloud)
-		}
-	}()
+	defer ticker.Stop()
+	updateLabels(ctx, k8sClient, cloud, pvInformer)
+	for range ticker.C {
+		updateLabels(ctx, k8sClient, cloud, pvInformer)
+	}
 
-	informer := metadataInformer(k8sClient, cloud)
-	stopCh := make(chan struct{})
-	informer.Start(stopCh)
-	informer.WaitForCacheSync(stopCh)
+	nodeInformer := metadataInformer(ctx, k8sClient, cloud, pvInformer)
+	nodeInformerStopCh := make(chan struct{})
+	nodeInformer.Start(nodeInformerStopCh)
+	nodeInformer.WaitForCacheSync(nodeInformerStopCh)
+}
+
+func getPvVolumeIDs(pvInformer cache.SharedIndexInformer) []string {
+	var volumeHandles []string
+	pvCache := pvInformer.GetStore().List()
+	for _, pvObj := range pvCache {
+		if pv, ok := pvObj.(*v1.PersistentVolume); ok {
+			handle := pv.Spec.CSI.VolumeHandle
+			volumeHandles = append(volumeHandles, handle)
+		}
+	}
+	return volumeHandles
+}
+
+func getNonCSIManagedVolumes(pvInformer cache.SharedIndexInformer, volumes []ec2types.InstanceBlockDeviceMapping) int {
+	nonCSIVolumes := len(volumes)
+	pvs := getPvVolumeIDs(pvInformer)
+	for _, vol := range volumes {
+		for _, pv := range pvs {
+			if *vol.Ebs.VolumeId == pv {
+				nonCSIVolumes -= 1
+			}
+		}
+	}
+	return nonCSIVolumes
+}
+
+func isEBSVolume(pv *v1.PersistentVolume) bool {
+	if pv.Spec.CSI != nil && pv.Spec.CSI.Driver == "ebs.csi.aws.com" {
+		return true
+	}
+
+	return false
+}
+
+func pvInformer(clientset kubernetes.Interface) (informers.SharedInformerFactory, cache.SharedIndexInformer) {
+	factory := informers.NewSharedInformerFactoryWithOptions(clientset, 0)
+	pvInformer := factory.Core().V1().PersistentVolumes().Informer()
+	_, err := pvInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(newObj interface{}) {
+			if pv, ok := newObj.(*v1.PersistentVolume); ok {
+				if !isEBSVolume(pv) {
+					if err := pvInformer.GetStore().Delete(newObj); err != nil {
+						klog.ErrorS(err, "unable to delete pv from pv informer cache")
+					}
+				}
+			}
+		},
+		UpdateFunc: func(oldObj, obj interface{}) {
+			if pv, ok := obj.(*v1.PersistentVolume); ok {
+				if !isEBSVolume(pv) {
+					if err := pvInformer.GetStore().Delete(obj); err != nil {
+						klog.ErrorS(err, "unable to delete pv from pv informer cache")
+					}
+				}
+			}
+		},
+	})
+	if err != nil {
+		klog.ErrorS(err, "unable to add event handler for pv informer")
+	}
+	return factory, pvInformer
 }
 
 // metadataInformer returns an informer factory that patches metadata labels for new nodes that join the cluster.
-func metadataInformer(clientset kubernetes.Interface, cloud cloud.Cloud) informers.SharedInformerFactory {
+func metadataInformer(ctx context.Context, clientset kubernetes.Interface, cloud cloud.Cloud, pvInformer cache.SharedIndexInformer) informers.SharedInformerFactory {
 	factory := informers.NewSharedInformerFactory(clientset, 0)
 	nodesInformer := factory.Core().V1().Nodes().Informer()
 	var handler cache.ResourceEventHandlerFuncs
@@ -75,7 +187,7 @@ func metadataInformer(clientset kubernetes.Interface, cloud cloud.Cloud) informe
 			node := &v1.NodeList{
 				Items: []v1.Node{*nodeObj},
 			}
-			err := updateMetadataEC2(clientset, cloud, node)
+			err := updateMetadataEC2(ctx, clientset, cloud, node, pvInformer)
 			if err != nil {
 				klog.ErrorS(err, "unable to update ENI/Volume count on node labels", "node", node.Items[0].Name)
 			}
@@ -89,20 +201,20 @@ func metadataInformer(clientset kubernetes.Interface, cloud cloud.Cloud) informe
 	return factory
 }
 
-func updateLabels(k8sClient kubernetes.Interface, cloud cloud.Cloud) {
-	nodes, err := getNodes(k8sClient)
+func updateLabels(ctx context.Context, k8sClient kubernetes.Interface, cloud cloud.Cloud, pvCache cache.SharedIndexInformer) {
+	nodes, err := getNodes(ctx, k8sClient)
 	if err != nil {
 		klog.ErrorS(err, "could not get nodes")
 		return
 	}
-	err = updateMetadataEC2(k8sClient, cloud, nodes)
+	err = updateMetadataEC2(ctx, k8sClient, cloud, nodes, pvCache)
 	if err != nil {
 		klog.ErrorS(err, "unable to update ENI/Volume count on node labels")
 	}
 }
 
-func getNodes(kubeclient kubernetes.Interface) (*v1.NodeList, error) {
-	nodes, err := kubeclient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+func getNodes(ctx context.Context, kubeclient kubernetes.Interface) (*v1.NodeList, error) {
+	nodes, err := kubeclient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		klog.ErrorS(err, "could not get nodes")
 		return nil, err
@@ -110,20 +222,21 @@ func getNodes(kubeclient kubernetes.Interface) (*v1.NodeList, error) {
 	return nodes, nil
 }
 
-func updateMetadataEC2(kubeclient kubernetes.Interface, c cloud.Cloud, nodes *v1.NodeList) error {
-	ENIsVolumeMap, err := getMetadata(c, nodes)
+func updateMetadataEC2(ctx context.Context, kubeclient kubernetes.Interface, cloudclient cloud.Cloud, nodes *v1.NodeList, pvInformer cache.SharedIndexInformer) error {
+	ENIsVolumeMap, err := getMetadata(ctx, cloudclient, nodes, pvInformer)
 	if err != nil {
 		klog.ErrorS(err, "unable to get ENI/Volume count")
 		return err
 	}
 
-	err = patchNodes(nodes, ENIsVolumeMap, kubeclient)
+	err = patchNodes(ctx, nodes, ENIsVolumeMap, kubeclient)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
+// parseNodes() gets the instance name from parsing the provider ID.
 func parseNode(providerID string) string {
 	if providerID != "" {
 		parts := strings.Split(providerID, "/")
@@ -134,7 +247,8 @@ func parseNode(providerID string) string {
 	return ""
 }
 
-func getMetadata(client cloud.Cloud, nodes *v1.NodeList) (map[string]enisVolumes, error) {
+// getMetadata() calls the EC2 API to get the number of ENIs and non-CSI managed volumes attached to each node.
+func getMetadata(ctx context.Context, cloudclient cloud.Cloud, nodes *v1.NodeList, pvInformer cache.SharedIndexInformer) (map[string]enisVolumes, error) {
 	nodeIds := make([]string, 0, len(nodes.Items))
 	for _, node := range nodes.Items {
 		nodeIds = append(nodeIds, parseNode(node.Spec.ProviderID))
@@ -145,9 +259,9 @@ func getMetadata(client cloud.Cloud, nodes *v1.NodeList) (map[string]enisVolumes
 	var respList []*ec2types.Instance
 
 	if len(nodeIds) > 1 {
-		respList, err = client.GetInstances(context.TODO(), nodeIds)
+		respList, err = cloudclient.GetInstances(ctx, nodeIds)
 	} else if len(nodeIds) == 1 {
-		resp, err = client.GetInstance(context.TODO(), nodeIds[0])
+		resp, err = cloudclient.GetInstance(ctx, nodeIds[0])
 		respList = []*ec2types.Instance{resp}
 	}
 
@@ -165,7 +279,8 @@ func getMetadata(client cloud.Cloud, nodes *v1.NodeList) (map[string]enisVolumes
 		numBlockDeviceMappings := 0
 		if instance.BlockDeviceMappings != nil {
 			// -1 for root volume because we eventually add this back in when calculating allocatable count in getVolumesLimit()
-			numBlockDeviceMappings = len(instance.BlockDeviceMappings) - 1
+			nonCSIManagedVolumes := getNonCSIManagedVolumes(pvInformer, instance.BlockDeviceMappings)
+			numBlockDeviceMappings = nonCSIManagedVolumes - 1
 		}
 		instanceID := *instance.InstanceId
 		ENIsVolumesMap[instanceID] = enisVolumes{ENIs: numAttachedENIs, Volumes: numBlockDeviceMappings}
@@ -174,7 +289,8 @@ func getMetadata(client cloud.Cloud, nodes *v1.NodeList) (map[string]enisVolumes
 	return ENIsVolumesMap, nil
 }
 
-func patchNodes(nodes *v1.NodeList, enisVolumeMap map[string]enisVolumes, clientset kubernetes.Interface) error {
+// patchNodes() patches the labels of each node to have the number of ENIs and non-CSI managed volumes attached to each node.
+func patchNodes(ctx context.Context, nodes *v1.NodeList, enisVolumeMap map[string]enisVolumes, clientset kubernetes.Interface) error {
 	for _, node := range nodes.Items {
 		newNode := node.DeepCopy()
 		numAttachedENIs := enisVolumeMap[parseNode(node.Spec.ProviderID)].ENIs
@@ -197,7 +313,7 @@ func patchNodes(nodes *v1.NodeList, enisVolumeMap map[string]enisVolumes, client
 			klog.ErrorS(err, "failed to create two way merge", "node", node.Name)
 			return err
 		}
-		if _, err := clientset.CoreV1().Nodes().Patch(context.TODO(), node.Name, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{}); err != nil {
+		if _, err := clientset.CoreV1().Nodes().Patch(ctx, node.Name, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{}); err != nil {
 			klog.ErrorS(err, "Failed to patch node", "node", node.Name)
 			return err
 		}

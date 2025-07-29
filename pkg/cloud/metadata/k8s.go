@@ -23,9 +23,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -33,10 +35,10 @@ import (
 	"k8s.io/klog/v2"
 )
 
-type KubernetesAPIClient func() (kubernetes.Interface, error)
+type KubernetesAPIClient func() (kubernetes.Interface, *rest.Config, error)
 
 func DefaultKubernetesAPIClient(kubeconfig string) KubernetesAPIClient {
-	return func() (clientset kubernetes.Interface, err error) {
+	return func() (clientset kubernetes.Interface, cfg *rest.Config, err error) {
 		var config *rest.Config
 		if kubeconfig != "" {
 			config, err = clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
@@ -44,7 +46,7 @@ func DefaultKubernetesAPIClient(kubeconfig string) KubernetesAPIClient {
 				&clientcmd.ConfigOverrides{},
 			).ClientConfig()
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		} else {
 			// creates the in-cluster config
@@ -56,7 +58,7 @@ func DefaultKubernetesAPIClient(kubeconfig string) KubernetesAPIClient {
 					// it provides the absolute host path to the container volume.
 					sandboxMountPoint := os.Getenv("CONTAINER_SANDBOX_MOUNT_POINT")
 					if sandboxMountPoint == "" {
-						return nil, errors.New("CONTAINER_SANDBOX_MOUNT_POINT environment variable is not set")
+						return nil, nil, errors.New("CONTAINER_SANDBOX_MOUNT_POINT environment variable is not set")
 					}
 
 					tokenFile := filepath.Join(sandboxMountPoint, "var", "run", "secrets", "kubernetes.io", "serviceaccount", "token")
@@ -64,12 +66,12 @@ func DefaultKubernetesAPIClient(kubeconfig string) KubernetesAPIClient {
 
 					token, tokenErr := os.ReadFile(tokenFile)
 					if tokenErr != nil {
-						return nil, tokenErr
+						return nil, nil, tokenErr
 					}
 
 					tlsClientConfig := rest.TLSClientConfig{}
 					if _, certErr := cert.NewPool(rootCAFile); certErr != nil {
-						return nil, fmt.Errorf("expected to load root CA config from %s, but got err: %w", rootCAFile, certErr)
+						return nil, nil, fmt.Errorf("expected to load root CA config from %s, but got err: %w", rootCAFile, certErr)
 					} else {
 						tlsClientConfig.CAFile = rootCAFile
 					}
@@ -81,7 +83,7 @@ func DefaultKubernetesAPIClient(kubeconfig string) KubernetesAPIClient {
 						BearerTokenFile: tokenFile,
 					}
 				} else {
-					return nil, err
+					return nil, nil, err
 				}
 			}
 		}
@@ -90,13 +92,13 @@ func DefaultKubernetesAPIClient(kubeconfig string) KubernetesAPIClient {
 		// creates the clientset
 		clientset, err = kubernetes.NewForConfig(config)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return clientset, nil
+		return clientset, config, nil
 	}
 }
 
-func KubernetesAPIInstanceInfo(clientset kubernetes.Interface) (*Metadata, error) {
+func KubernetesAPIInstanceInfo(clientset kubernetes.Interface, sylvia bool) (*Metadata, error) {
 	nodeName := os.Getenv("CSI_NODE_NAME")
 	if nodeName == "" {
 		return nil, errors.New("CSI_NODE_NAME env var not set")
@@ -106,6 +108,35 @@ func KubernetesAPIInstanceInfo(clientset kubernetes.Interface) (*Metadata, error
 	node, err := clientset.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("error getting Node %v: %w", nodeName, err)
+	}
+
+	enis := 1
+	volumes := 0
+
+	if sylvia {
+		backoff := wait.Backoff{
+			Duration: 1 * time.Second,
+			Factor:   1.5,
+			Steps:    6,
+		}
+
+		//TODO: need to shorten to 5 seconds later
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		backoffErr := wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
+			if enis, volumes, err = getEC2ENIsVolumes(node); err != nil {
+				klog.ErrorS(err, "Get ENI and volume labels failed, retrying...")
+				//nolint: nilerr // Want to catch retry all errs until context times out
+				return false, nil
+			}
+			return true, nil
+		})
+
+		if backoffErr != nil {
+			klog.ErrorS(backoffErr, "Get ENI and volume labels failed after multiple retries, falling back to Kubernetes metadata")
+			return nil, backoffErr
+		}
 	}
 
 	providerID := node.Spec.ProviderID
@@ -142,9 +173,6 @@ func KubernetesAPIInstanceInfo(clientset kubernetes.Interface) (*Metadata, error
 		return nil, errors.New("could not retrieve AZ from topology label")
 	}
 
-	enis := getENIs(node)
-	volumes := getVolumes(node)
-
 	instanceInfo := Metadata{
 		InstanceID:             instanceID,
 		InstanceType:           instanceType,
@@ -153,38 +181,49 @@ func KubernetesAPIInstanceInfo(clientset kubernetes.Interface) (*Metadata, error
 		NumAttachedENIs:        enis,
 		NumBlockDeviceMappings: volumes,
 	}
-
 	return &instanceInfo, nil
 }
 
-func getVolumes(node *corev1.Node) int {
+func getEC2ENIsVolumes(node *corev1.Node) (int, int, error) {
+	vol, err := getVolumes(node)
+	if err != nil {
+		return 0, 0, err
+	}
+	eni, err := getENIs(node)
+	if err != nil {
+		return 0, 0, err
+	}
+	return eni, vol, nil
+}
+
+func getVolumes(node *corev1.Node) (int, error) {
 	var volumes int
 	if val, ok := node.GetLabels()[VolumesLabel]; ok {
 		var err error
 		volumes, err = strconv.Atoi(val)
 		if err != nil {
-			klog.ErrorS(err, "failed to convert number of volumes label to int, defaulting to 0 volumes")
-			volumes = 0
+			klog.ErrorS(err, "failed to convert number of volumes label to int")
+			return 0, err
 		}
 	} else {
-		klog.V(2).InfoS("num-volumes label not found on node, defaulting to 0 volumes")
-		volumes = 0
+		klog.V(2).InfoS("num-volumes label not found on node")
+		return 0, errors.New("num-volumes label not found on node")
 	}
-	return volumes
+	return volumes, nil
 }
 
-func getENIs(node *corev1.Node) int {
+func getENIs(node *corev1.Node) (int, error) {
 	var enis int
 	if val, ok := node.GetLabels()[ENIsLabel]; ok {
 		var err error
 		enis, err = strconv.Atoi(val)
 		if err != nil {
-			klog.ErrorS(err, "failed to convert number of ENIs label to int, defaulting to 1 ENI")
-			enis = 1
+			klog.ErrorS(err, "failed to convert number of ENIs label to int")
+			return 1, err
 		}
 	} else {
-		klog.V(2).InfoS("num-ENIs label not found on node, defaulting to 1 ENI")
-		enis = 1
+		klog.V(2).InfoS("num-ENIs label not found on node")
+		return 1, errors.New("num-ENIs label not found on node")
 	}
-	return enis
+	return enis, nil
 }

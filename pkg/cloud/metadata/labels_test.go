@@ -17,13 +17,14 @@ package metadata
 import (
 	"context"
 	"errors"
-	"reflect"
+	"fmt"
+	reflect "reflect"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/golang/mock/gomock"
+	gomock "github.com/golang/mock/gomock"
 	"github.com/kubernetes-sigs/aws-ebs-csi-driver/pkg/cloud"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,11 +38,28 @@ func TestMetadataInformer(t *testing.T) {
 	testCases := []struct {
 		name             string
 		newNode          *corev1.Node
+		newPV            *corev1.PersistentVolume
 		expectedMetadata map[string]enisVolumes
 		expErr           error
 	}{
 		{
-			name: "success: normal",
+			name: "success: normal, new node added and new csi managed PV added",
+			newNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "i-001",
+					Labels: make(map[string]string),
+				},
+				Spec: corev1.NodeSpec{
+					ProviderID: "example/i-001",
+				},
+			},
+			expectedMetadata: map[string]enisVolumes{
+				"i-001": {ENIs: 2, Volumes: 2},
+			},
+			expErr: nil,
+		},
+		{
+			name: "success: normal, new node added and new non-csi managed PV added",
 			newNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:   "i-001",
@@ -71,30 +89,47 @@ func TestMetadataInformer(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 
-			watcherStarted := make(chan struct{})
-			clientset := fake.NewSimpleClientset()
-			clientset.PrependWatchReactor("*", func(action clienttesting.Action) (handled bool, ret watch.Interface, err error) {
+			pvWatcherStarted := make(chan struct{})
+			pvClientset := fake.NewSimpleClientset()
+			pvClientset.PrependWatchReactor("*", func(action clienttesting.Action) (handled bool, ret watch.Interface, err error) {
 				gvr := action.GetResource()
 				ns := action.GetNamespace()
-				watch, err := clientset.Tracker().Watch(gvr, ns)
+				watch, err := pvClientset.Tracker().Watch(gvr, ns)
 				if err != nil {
 					return false, nil, err
 				}
-				close(watcherStarted)
+				close(pvWatcherStarted)
 				return true, watch, nil
 			})
-			informer := metadataInformer(clientset, mockCloud)
-			informer.Start(ctx.Done())
+			pvInformerFactory, pvInformer := pvInformer(pvClientset)
+			pvInformerFactory.Start(ctx.Done())
 			cache.WaitForCacheSync(ctx.Done())
-			<-watcherStarted
+			<-pvWatcherStarted
 
-			_, err := clientset.CoreV1().Nodes().Create(t.Context(), tc.newNode, metav1.CreateOptions{})
+			nodeWatcherStarted := make(chan struct{})
+			nodeClientset := fake.NewSimpleClientset()
+			nodeClientset.PrependWatchReactor("*", func(action clienttesting.Action) (handled bool, ret watch.Interface, err error) {
+				gvr := action.GetResource()
+				ns := action.GetNamespace()
+				watch, err := nodeClientset.Tracker().Watch(gvr, ns)
+				if err != nil {
+					return false, nil, err
+				}
+				close(nodeWatcherStarted)
+				return true, watch, nil
+			})
+			nodeInformer := metadataInformer(ctx, nodeClientset, mockCloud, pvInformer)
+			nodeInformer.Start(ctx.Done())
+			cache.WaitForCacheSync(ctx.Done())
+			<-nodeWatcherStarted
+
+			_, err := nodeClientset.CoreV1().Nodes().Create(t.Context(), tc.newNode, metav1.CreateOptions{})
 			if err != nil {
 				t.Fatalf("error injecting node add: %v", err)
 			}
 
 			time.Sleep(5e8)
-			node, _ := clientset.CoreV1().Nodes().Get(t.Context(), tc.newNode.Name, metav1.GetOptions{})
+			node, _ := nodeClientset.CoreV1().Nodes().Get(t.Context(), tc.newNode.Name, metav1.GetOptions{})
 			if err != nil {
 				if tc.expErr == nil {
 					t.Fatalf("MetadataInformer() failed: expected no error, got: %v", err)
@@ -103,7 +138,7 @@ func TestMetadataInformer(t *testing.T) {
 					t.Fatalf("MetadataInformer() failed: expected error %q, got %q", tc.expErr, err)
 				}
 			} else {
-				expectedENIs := strconv.Itoa(tc.expectedMetadata[tc.newNode.Name].ENIs)
+				expectedENIs := strconv.Itoa(tc.expectedMetadata[node.Name].ENIs)
 				expectedVol := strconv.Itoa(tc.expectedMetadata[node.Name].Volumes)
 
 				labeledENIs := node.GetLabels()[ENIsLabel]
@@ -121,11 +156,35 @@ func TestMetadataInformer(t *testing.T) {
 }
 
 func newFakeInstance(instanceID string, numENIs, numVolumes int) *types.Instance {
+	blockDevices := make([]types.InstanceBlockDeviceMapping, numVolumes)
+	for i := range numVolumes {
+		volumeID := fmt.Sprintf("vol-00%d", i+1)
+		blockDevices[i] = types.InstanceBlockDeviceMapping{
+			Ebs: &types.EbsInstanceBlockDevice{
+				VolumeId: &volumeID,
+			},
+		}
+	}
+
 	return &types.Instance{
 		InstanceId:          &instanceID,
-		BlockDeviceMappings: make([]types.InstanceBlockDeviceMapping, numVolumes),
+		BlockDeviceMappings: blockDevices,
 		NetworkInterfaces:   make([]types.InstanceNetworkInterface, numENIs),
 	}
+}
+
+func mockAddPV(newPV *corev1.PersistentVolume, instances []*types.Instance) []*types.Instance {
+	if newPV == nil {
+		return instances
+	}
+
+	instances[0].BlockDeviceMappings = append(instances[0].BlockDeviceMappings,
+		types.InstanceBlockDeviceMapping{
+			Ebs: &types.EbsInstanceBlockDevice{
+				VolumeId: &newPV.Spec.CSI.VolumeHandle,
+			},
+		})
+	return instances
 }
 
 func TestGetMetadata(t *testing.T) {
@@ -134,6 +193,7 @@ func TestGetMetadata(t *testing.T) {
 		instances        []*types.Instance
 		nodes            *corev1.NodeList
 		expectedMetadata map[string]enisVolumes
+		newPV            *corev1.PersistentVolume
 		expErr           error
 	}{
 		{
@@ -155,6 +215,7 @@ func TestGetMetadata(t *testing.T) {
 				"i-001": {ENIs: 1, Volumes: 0},
 				"i-002": {ENIs: 2, Volumes: 2},
 			},
+			newPV:  nil,
 			expErr: nil,
 		},
 		{
@@ -170,6 +231,57 @@ func TestGetMetadata(t *testing.T) {
 			expectedMetadata: map[string]enisVolumes{
 				"i-001": {ENIs: 5, Volumes: 1},
 			},
+			newPV:  nil,
+			expErr: nil,
+		},
+		{
+			name:      "success: normal with one instance and add one non csi managed PV",
+			instances: []*types.Instance{newFakeInstance("i-001", 5, 2)},
+			nodes: &corev1.NodeList{Items: []corev1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "i-001",
+					},
+				},
+			}},
+			expectedMetadata: map[string]enisVolumes{
+				"i-001": {ENIs: 5, Volumes: 2},
+			},
+			newPV: &corev1.PersistentVolume{
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver:       "",
+							VolumeHandle: "vol-003",
+						},
+					},
+				},
+			},
+			expErr: nil,
+		},
+		{
+			name:      "success: normal with one instance and add one csi managed PV",
+			instances: []*types.Instance{newFakeInstance("i-001", 5, 2)},
+			nodes: &corev1.NodeList{Items: []corev1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "i-001",
+					},
+				},
+			}},
+			expectedMetadata: map[string]enisVolumes{
+				"i-001": {ENIs: 5, Volumes: 1},
+			},
+			newPV: &corev1.PersistentVolume{
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver:       "ebs.csi.aws.com",
+							VolumeHandle: "vol-003",
+						},
+					},
+				},
+			},
 			expErr: nil,
 		},
 		{
@@ -183,12 +295,42 @@ func TestGetMetadata(t *testing.T) {
 				},
 			}},
 			expectedMetadata: map[string]enisVolumes{},
+			newPV:            nil,
 			expErr:           errors.New("failed to describe instances"),
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			pvWatcherStarted := make(chan struct{})
+			pvClientset := fake.NewSimpleClientset()
+			pvClientset.PrependWatchReactor("*", func(action clienttesting.Action) (handled bool, ret watch.Interface, err error) {
+				gvr := action.GetResource()
+				ns := action.GetNamespace()
+				watch, err := pvClientset.Tracker().Watch(gvr, ns)
+				if err != nil {
+					return false, nil, err
+				}
+				close(pvWatcherStarted)
+				return true, watch, nil
+			})
+			pvInformerFactory, pvInformer := pvInformer(pvClientset)
+			pvInformerFactory.Start(ctx.Done())
+			cache.WaitForCacheSync(ctx.Done())
+			<-pvWatcherStarted
+
+			if tc.newPV != nil {
+				_, err := pvClientset.CoreV1().PersistentVolumes().Create(t.Context(), tc.newPV, metav1.CreateOptions{})
+				if err != nil {
+					t.Fatalf("error injecting PV add: %v", err)
+				}
+				time.Sleep(5e8)
+			}
+
+			tc.instances = mockAddPV(tc.newPV, tc.instances)
 			mockCtrl := gomock.NewController(t)
 			mockCloud := cloud.NewMockCloud(mockCtrl)
 
@@ -204,7 +346,7 @@ func TestGetMetadata(t *testing.T) {
 				)
 			}
 
-			ENIsVolumesMap, err := getMetadata(mockCloud, tc.nodes)
+			ENIsVolumesMap, err := getMetadata(t.Context(), mockCloud, tc.nodes, pvInformer)
 			if err != nil {
 				if tc.expErr == nil {
 					t.Fatalf("GetMetadata() failed: expected no error, got: %v", err)
@@ -253,7 +395,7 @@ func TestPatchLabels(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			clientset := fake.NewSimpleClientset(&tc.node)
-			err := patchNodes(&corev1.NodeList{Items: []corev1.Node{tc.node}}, tc.ENIsVolumesMap, clientset)
+			err := patchNodes(t.Context(), &corev1.NodeList{Items: []corev1.Node{tc.node}}, tc.ENIsVolumesMap, clientset)
 			if err != nil {
 				if tc.expErr == nil {
 					t.Fatalf("PatchNodes() failed: expected no error, got: %v", err)

@@ -17,13 +17,10 @@ limitations under the License.
 package metadata
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"os"
 
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 )
@@ -47,13 +44,14 @@ type MetadataServiceConfig struct {
 }
 
 const (
-	SourceIMDS = "imds"
-	SourceK8s  = "kubernetes"
+	SourceIMDS      = "imds"
+	SourceSylviaK8s = "sylviakubernetes"
+	SourceK8s       = "kubernetes"
 )
 
 var (
 	// DefaultMetadataSources lists the default fallback order of driver Metadata sources.
-	DefaultMetadataSources = []string{SourceIMDS, SourceK8s}
+	DefaultMetadataSources = []string{SourceIMDS, SourceSylviaK8s, SourceK8s}
 )
 
 var _ MetadataService = &Metadata{}
@@ -75,9 +73,24 @@ func NewMetadataService(cfg MetadataServiceConfig, region string) (MetadataServi
 				}
 				klog.ErrorS(err, "Retrieving IMDS metadata failed")
 			}
+		case SourceSylviaK8s:
+			klog.V(2).InfoS("Attempting to retrieve instance metadata from Sylvia Kubernetes API")
+			metadata, err := retrieveK8sMetadata(cfg.K8sAPIClient, true)
+			if err == nil {
+				klog.V(2).InfoS("Retrieved metadata from Sylvia Kubernetes")
+				return metadata.overrideRegion(region), nil
+			}
+			klog.ErrorS(err, "Retrieving Sylvia Kubernetes metadata failed, fallback to Kubernetes metadata")
+			klog.V(2).InfoS("Attempting to retrieve instance metadata from Kubernetes API")
+			metadata, err = retrieveK8sMetadata(cfg.K8sAPIClient, false)
+			if err == nil {
+				klog.V(2).InfoS("Retrieved metadata from Kubernetes")
+				return metadata.overrideRegion(region), nil
+			}
+			klog.ErrorS(err, "Retrieving Kubernetes metadata failed")
 		case SourceK8s:
 			klog.V(2).InfoS("Attempting to retrieve instance metadata from Kubernetes API")
-			metadata, err := retrieveK8sMetadata(cfg.K8sAPIClient)
+			metadata, err := retrieveK8sMetadata(cfg.K8sAPIClient, false)
 			if err == nil {
 				klog.V(2).InfoS("Retrieved metadata from Kubernetes")
 				return metadata.overrideRegion(region), nil
@@ -96,18 +109,22 @@ func NewMetadataService(cfg MetadataServiceConfig, region string) (MetadataServi
 // We do not refresh blockDeviceMappings because IMDS only reports data from when instance starts (As of April 2025).
 func (m *Metadata) UpdateMetadata(k8sClient kubernetes.Interface) error {
 	if m.IMDSClient == nil {
-		nodeName := os.Getenv("CSI_NODE_NAME")
-		if nodeName == "" {
-			return errors.New("CSI_NODE_NAME env var not set")
-		}
+		// nodeName := os.Getenv("CSI_NODE_NAME")
+		// if nodeName == "" {
+		// 	return errors.New("CSI_NODE_NAME env var not set")
+		// }
 
-		node, err := k8sClient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
+		// node, err := k8sClient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+		// if err != nil {
+		// 	klog.ErrorS(err, "failed to get node")
+		// 	return err
+		// }
 
-		m.NumAttachedENIs = getENIs(node)
-		m.NumBlockDeviceMappings = getVolumes(node)
+		// m.NumAttachedENIs, m.NumBlockDeviceMappings, err = getEC2ENIsVolumes(node)
+		// if err != nil {
+		// 	klog.ErrorS(err, "couldn't update vol and ENI count")
+		// 	return err
+		// }
 		return nil
 	}
 
@@ -129,13 +146,13 @@ func retrieveIMDSMetadata(imdsClient IMDSClient) (*Metadata, error) {
 	return IMDSInstanceInfo(svc)
 }
 
-func retrieveK8sMetadata(k8sAPIClient KubernetesAPIClient) (*Metadata, error) {
-	clientset, err := k8sAPIClient()
+func retrieveK8sMetadata(k8sAPIClient KubernetesAPIClient, sylvia bool) (*Metadata, error) {
+	clientset, _, err := k8sAPIClient()
 	if err != nil {
 		return nil, err
 	}
 
-	return KubernetesAPIInstanceInfo(clientset)
+	return KubernetesAPIInstanceInfo(clientset, sylvia)
 }
 
 // Override the region on a Metadata object if it is non-empty.
