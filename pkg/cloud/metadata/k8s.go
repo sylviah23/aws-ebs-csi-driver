@@ -39,7 +39,7 @@ type KubernetesAPIClient func() (kubernetes.Interface, *rest.Config, error)
 
 func DefaultKubernetesAPIClient(kubeconfig string) KubernetesAPIClient {
 	return func() (clientset kubernetes.Interface, cfg *rest.Config, err error) {
-		var config *rest.Config
+		var config *rest.Config // needed for leader election
 		if kubeconfig != "" {
 			config, err = clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 				&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig},
@@ -98,7 +98,7 @@ func DefaultKubernetesAPIClient(kubeconfig string) KubernetesAPIClient {
 	}
 }
 
-func KubernetesAPIInstanceInfo(clientset kubernetes.Interface, sylvia bool) (*Metadata, error) {
+func KubernetesAPIInstanceInfo(clientset kubernetes.Interface, ec2Labels bool) (*Metadata, error) {
 	nodeName := os.Getenv("CSI_NODE_NAME")
 	if nodeName == "" {
 		return nil, errors.New("CSI_NODE_NAME env var not set")
@@ -113,7 +113,7 @@ func KubernetesAPIInstanceInfo(clientset kubernetes.Interface, sylvia bool) (*Me
 	enis := 1
 	volumes := 0
 
-	if sylvia {
+	if ec2Labels {
 		backoff := wait.Backoff{
 			Duration: 1 * time.Second,
 			Factor:   1.5,
@@ -128,6 +128,10 @@ func KubernetesAPIInstanceInfo(clientset kubernetes.Interface, sylvia bool) (*Me
 			if enis, volumes, err = getEC2ENIsVolumes(node); err != nil {
 				klog.ErrorS(err, "Get ENI and volume labels failed, retrying...")
 				//nolint: nilerr // Want to catch retry all errs until context times out
+				node, err = clientset.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+				if err != nil {
+					return false, nil
+				}
 				return false, nil
 			}
 			return true, nil

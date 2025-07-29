@@ -67,7 +67,7 @@ func ContinuousUpdateLabelsLeaderElection(clientset kubernetes.Interface, k8sCon
 		time.Second*10,
 	)
 	if err != nil {
-		panic(err)
+		klog.ErrorS(err, "Could not set up leader election for updating Nodes with additional ebs-csi-driver metadata labels")
 	}
 	el, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
 		Lock:          l,
@@ -77,15 +77,19 @@ func ContinuousUpdateLabelsLeaderElection(clientset kubernetes.Interface, k8sCon
 		Name:          lockName,
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {
-				klog.InfoS("This controller is the leader for updating metadata labels")
+				klog.InfoS("This container became the leader for updating Nodes with additional ebs-csi-driver metadata labels")
 				continuousUpdateLabels(ctx, clientset, cloud, updateTime)
 			},
-			OnStoppedLeading: func() { klog.InfoS("This controller is no longer the leader for updating metadata labels") },
-			OnNewLeader:      func(identity string) { klog.InfoS("the leader for updating metadata labels is", "", identity) },
+			OnStoppedLeading: func() {
+				klog.InfoS("This container is no longer the leader for updating Nodes with additional ebs-csi-driver metadata labels")
+			},
+			OnNewLeader: func(identity string) {
+				klog.InfoS("This leader for updating Nodes with additional ebs-csi-driver metadata labels is", "", identity)
+			},
 		},
 	})
 	if err != nil {
-		panic(err)
+		klog.ErrorS(err, "Leader for updating Nodes with additional ebs-csi-driver metadata labels could not be created")
 	}
 
 	el.Run(context.Background())
@@ -101,6 +105,11 @@ func continuousUpdateLabels(ctx context.Context, k8sClient kubernetes.Interface,
 	pvInformerFactory.Start(pvInformerStopCh)
 	pvInformerFactory.WaitForCacheSync(pvInformerStopCh)
 
+	nodeInformer := metadataInformer(ctx, k8sClient, cloud, pvInformer)
+	nodeInformerStopCh := make(chan struct{})
+	nodeInformer.Start(nodeInformerStopCh)
+	nodeInformer.WaitForCacheSync(nodeInformerStopCh)
+
 	ticker := time.NewTicker(time.Duration(updateTime) * time.Minute)
 
 	defer ticker.Stop()
@@ -108,11 +117,6 @@ func continuousUpdateLabels(ctx context.Context, k8sClient kubernetes.Interface,
 	for range ticker.C {
 		updateLabels(ctx, k8sClient, cloud, pvInformer)
 	}
-
-	nodeInformer := metadataInformer(ctx, k8sClient, cloud, pvInformer)
-	nodeInformerStopCh := make(chan struct{})
-	nodeInformer.Start(nodeInformerStopCh)
-	nodeInformer.WaitForCacheSync(nodeInformerStopCh)
 }
 
 func getPvVolumeIDs(pvInformer cache.SharedIndexInformer) []string {
@@ -148,6 +152,7 @@ func isEBSVolume(pv *v1.PersistentVolume) bool {
 	return false
 }
 
+// pvInformer creates an informer that watches for CSI managed EBS volumes
 func pvInformer(clientset kubernetes.Interface) (informers.SharedInformerFactory, cache.SharedIndexInformer) {
 	factory := informers.NewSharedInformerFactoryWithOptions(clientset, 0)
 	pvInformer := factory.Core().V1().PersistentVolumes().Informer()
@@ -184,6 +189,7 @@ func metadataInformer(ctx context.Context, clientset kubernetes.Interface, cloud
 	var handler cache.ResourceEventHandlerFuncs
 	handler.AddFunc = func(obj interface{}) {
 		if nodeObj, ok := obj.(*v1.Node); ok {
+			klog.InfoS("new node added")
 			node := &v1.NodeList{
 				Items: []v1.Node{*nodeObj},
 			}
@@ -317,6 +323,7 @@ func patchNodes(ctx context.Context, nodes *v1.NodeList, enisVolumeMap map[strin
 			klog.ErrorS(err, "Failed to patch node", "node", node.Name)
 			return err
 		}
+		klog.InfoS("patched labels", "node", node.Name)
 	}
 	return nil
 }
