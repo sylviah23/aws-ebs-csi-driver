@@ -228,6 +228,7 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - patcher
+            - --v=4
           env:
             - name: CSI_NODE_NAME
               valueFrom:
