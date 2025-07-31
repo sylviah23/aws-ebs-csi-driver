@@ -41,7 +41,7 @@ var (
 )
 
 const (
-	// Node labels will update volume and ENI count every `LabelRefreshTime` minutes.
+	// LabelRefreshTime is the time in minutes that it takes for node labels to update volume and ENI count.
 	LabelRefreshTime = 60
 )
 

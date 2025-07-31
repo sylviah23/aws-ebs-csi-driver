@@ -39,6 +39,20 @@ func TestNewMetadataService(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
+	defaultNodeSpec := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-node",
+			Labels: map[string]string{
+				corev1.LabelInstanceTypeStable: "c5.xlarge",
+				corev1.LabelTopologyRegion:     "us-west-2",
+				corev1.LabelTopologyZone:       "us-west-2a",
+			},
+		},
+		Spec: corev1.NodeSpec{
+			ProviderID: "aws:///us-west-2a/i-1234567890abcdef0",
+		},
+	}
+
 	testCases := []struct {
 		name             string
 		metadataSources  []string
@@ -52,19 +66,7 @@ func TestNewMetadataService(t *testing.T) {
 		{
 			name:            "TestNewMetadataService: Default MetadataSources, IMDS available",
 			metadataSources: DefaultMetadataSources,
-			node: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node",
-					Labels: map[string]string{
-						corev1.LabelInstanceTypeStable: "c5.xlarge",
-						corev1.LabelTopologyRegion:     "us-west-2",
-						corev1.LabelTopologyZone:       "us-west-2a",
-					},
-				},
-				Spec: corev1.NodeSpec{
-					ProviderID: "aws:///us-west-2a/i-1234567890abcdef0",
-				},
-			},
+			node:            defaultNodeSpec,
 			expectedMetadata: &Metadata{
 				InstanceID:             "i-1234567890abcdef0",
 				InstanceType:           "c5.xlarge",
@@ -78,19 +80,7 @@ func TestNewMetadataService(t *testing.T) {
 			name:            "TestNewMetadataService: Default MetadataSources, AWS_EC2_METADATA_DISABLED=true, K8s API available",
 			metadataSources: DefaultMetadataSources,
 			imdsDisabled:    true,
-			node: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node",
-					Labels: map[string]string{
-						corev1.LabelInstanceTypeStable: "c5.xlarge",
-						corev1.LabelTopologyRegion:     "us-west-2",
-						corev1.LabelTopologyZone:       "us-west-2a",
-					},
-				},
-				Spec: corev1.NodeSpec{
-					ProviderID: "aws:///us-west-2a/i-1234567890abcdef0",
-				},
-			},
+			node:            defaultNodeSpec,
 			expectedMetadata: &Metadata{
 				InstanceID:             "i-1234567890abcdef0",
 				InstanceType:           "c5.xlarge",
@@ -104,19 +94,7 @@ func TestNewMetadataService(t *testing.T) {
 			name:            "TestNewMetadataService: Default MetadataSources, IMDS error, K8s API available",
 			metadataSources: DefaultMetadataSources,
 			IMDSError:       errors.New("IMDS error"),
-			node: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node",
-					Labels: map[string]string{
-						corev1.LabelInstanceTypeStable: "c5.xlarge",
-						corev1.LabelTopologyRegion:     "us-west-2",
-						corev1.LabelTopologyZone:       "us-west-2a",
-					},
-				},
-				Spec: corev1.NodeSpec{
-					ProviderID: "aws:///us-west-2a/i-1234567890abcdef0",
-				},
-			},
+			node:            defaultNodeSpec,
 			expectedMetadata: &Metadata{
 				InstanceID:             "i-1234567890abcdef0",
 				InstanceType:           "c5.xlarge",
@@ -131,56 +109,20 @@ func TestNewMetadataService(t *testing.T) {
 			metadataSources: DefaultMetadataSources,
 			IMDSError:       errors.New("IMDS error"),
 			k8sAPIError:     errors.New("K8s API error"),
-			node: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node",
-					Labels: map[string]string{
-						corev1.LabelInstanceTypeStable: "c5.xlarge",
-						corev1.LabelTopologyRegion:     "us-west-2",
-						corev1.LabelTopologyZone:       "us-west-2a",
-					},
-				},
-				Spec: corev1.NodeSpec{
-					ProviderID: "aws:///us-west-2a/i-1234567890abcdef0",
-				},
-			},
-			expectedError: sourcesUnavailableErr(DefaultMetadataSources),
+			node:            defaultNodeSpec,
+			expectedError:   sourcesUnavailableErr(DefaultMetadataSources),
 		},
 		{
 			name:            "TestNewMetadataService: MetadataSources IMDS-only, IMDS error",
 			metadataSources: []string{SourceIMDS},
 			IMDSError:       errors.New("IMDS error"),
-			node: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node",
-					Labels: map[string]string{
-						corev1.LabelInstanceTypeStable: "c5.xlarge",
-						corev1.LabelTopologyRegion:     "us-west-2",
-						corev1.LabelTopologyZone:       "us-west-2a",
-					},
-				},
-				Spec: corev1.NodeSpec{
-					ProviderID: "aws:///us-west-2a/i-1234567890abcdef0",
-				},
-			},
-			expectedError: sourcesUnavailableErr([]string{SourceIMDS}),
+			node:            defaultNodeSpec,
+			expectedError:   sourcesUnavailableErr([]string{SourceIMDS}),
 		},
 		{
 			name:            "TestNewMetadataService: MetadataSources K8s-only, success",
 			metadataSources: []string{SourceK8s},
-			node: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node",
-					Labels: map[string]string{
-						corev1.LabelInstanceTypeStable: "c5.xlarge",
-						corev1.LabelTopologyRegion:     "us-west-2",
-						corev1.LabelTopologyZone:       "us-west-2a",
-					},
-				},
-				Spec: corev1.NodeSpec{
-					ProviderID: "aws:///us-west-2a/i-1234567890abcdef0",
-				},
-			},
+			node:            defaultNodeSpec,
 			expectedMetadata: &Metadata{
 				InstanceID:             "i-1234567890abcdef0",
 				InstanceType:           "c5.xlarge",
@@ -196,8 +138,8 @@ func TestNewMetadataService(t *testing.T) {
 			expectedError:   InvalidSourceErr([]string{"invalid"}, "invalid"),
 		},
 		{
-			name:            "TestSylviaKubernetesAPIInstanceInfo: success Sylvia metadata",
-			metadataSources: []string{SourceSylviaK8s},
+			name:            "TestEC2LabelsKubernetesAPIInstanceInfo: success ec2Labels metadata",
+			metadataSources: []string{SourceEC2LabelsK8s},
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-node",
@@ -223,8 +165,8 @@ func TestNewMetadataService(t *testing.T) {
 			},
 		},
 		{
-			name:            "TestSylviaKubernetesAPIInstanceInfo: Invalid volume label, fallback to Kubernetes Metadata",
-			metadataSources: []string{SourceSylviaK8s},
+			name:            "TestEC2LabelsKubernetesAPIInstanceInfo: Invalid volume label, fallback to Kubernetes Metadata",
+			metadataSources: []string{SourceEC2LabelsK8s},
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-node",
@@ -250,8 +192,8 @@ func TestNewMetadataService(t *testing.T) {
 			},
 		},
 		{
-			name:            "TestSylviaKubernetesAPIInstanceInfo: Invalid ENI label, fallback to Kubernetes Metadata",
-			metadataSources: []string{SourceSylviaK8s},
+			name:            "TestEC2LabelsKubernetesAPIInstanceInfo: Invalid ENI label, fallback to Kubernetes Metadata",
+			metadataSources: []string{SourceEC2LabelsK8s},
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-node",
@@ -720,7 +662,7 @@ func TestKubernetesAPIInstanceInfo(t *testing.T) {
 	}
 }
 
-func TestSylviaKubernetesAPIInstanceInfo(t *testing.T) {
+func TestEC2LabelsKubernetesAPIInstanceInfo(t *testing.T) {
 	testCases := []struct {
 		name             string
 		nodeName         string
@@ -729,17 +671,17 @@ func TestSylviaKubernetesAPIInstanceInfo(t *testing.T) {
 		expectedMetadata *Metadata
 	}{
 		{
-			name:          "TestSylviaKubernetesAPIInstanceInfo: Node name not set",
+			name:          "TestEC2LabelsKubernetesAPIInstanceInfo: Node name not set",
 			nodeName:      "",
 			expectedError: "CSI_NODE_NAME env var not set",
 		},
 		{
-			name:          "TestSylviaKubernetesAPIInstanceInfo: Error getting node",
+			name:          "TestEC2LabelsKubernetesAPIInstanceInfo: Error getting node",
 			nodeName:      "test-node",
 			expectedError: "error getting Node test-node: nodes \"test-node\" not found",
 		},
 		{
-			name:     "TestSylviaKubernetesAPIInstanceInfo: Valid instance info for sylvia metadata",
+			name:     "TestEC2LabelsKubernetesAPIInstanceInfo: Valid instance info for ec2 labels metadata",
 			nodeName: "test-node",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
@@ -766,7 +708,7 @@ func TestSylviaKubernetesAPIInstanceInfo(t *testing.T) {
 			},
 		},
 		{
-			name:     "TestSylviaKubernetesAPIInstanceInfo: non valid labels",
+			name:     "TestEC2LabelsKubernetesAPIInstanceInfo: non valid labels",
 			nodeName: "test-node",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
@@ -776,7 +718,7 @@ func TestSylviaKubernetesAPIInstanceInfo(t *testing.T) {
 					ProviderID: "aws:///us-west-2a/i-1234567890abcdef0",
 				},
 			},
-			expectedError: "timed out waiting for the condition",
+			expectedError: "context deadline exceeded",
 		},
 	}
 

@@ -427,6 +427,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - patcher
+            - --v={{ .Values.sidecars.patcher.logLevel }}
             {{- range .Values.sidecars.patcher.additionalArgs }}
             - {{ . }}
             {{- end }}
@@ -445,9 +446,6 @@ spec:
           envFrom:
             {{- . | toYaml | nindent 12 }}
           {{- end }}
-          volumeMounts:
-            - name: socket-dir
-              mountPath: /csi
           {{- with default .Values.controller.resources .Values.sidecars.patcher.resources }}
           resources:
             {{- toYaml . | nindent 12 }}

@@ -43,23 +43,7 @@ func TestMetadataInformer(t *testing.T) {
 		expErr           error
 	}{
 		{
-			name: "success: normal, new node added and new csi managed PV added",
-			newNode: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:   "i-001",
-					Labels: make(map[string]string),
-				},
-				Spec: corev1.NodeSpec{
-					ProviderID: "example/i-001",
-				},
-			},
-			expectedMetadata: map[string]enisVolumes{
-				"i-001": {ENIs: 2, Volumes: 2},
-			},
-			expErr: nil,
-		},
-		{
-			name: "success: normal, new node added and new non-csi managed PV added",
+			name: "success: normal, new node added",
 			newNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:   "i-001",
@@ -184,10 +168,22 @@ func mockAddPV(newPV *corev1.PersistentVolume, instances []*types.Instance) []*t
 				VolumeId: &newPV.Spec.CSI.VolumeHandle,
 			},
 		})
+
 	return instances
 }
 
 func TestGetMetadata(t *testing.T) {
+	defaultNode := &corev1.NodeList{Items: []corev1.Node{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "i-001",
+			},
+
+			Spec: corev1.NodeSpec{
+				ProviderID: "example/i-001",
+			}},
+	}}
+
 	testCases := []struct {
 		name             string
 		instances        []*types.Instance
@@ -204,12 +200,18 @@ func TestGetMetadata(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "i-001",
 					},
-				},
+
+					Spec: corev1.NodeSpec{
+						ProviderID: "example/i-001",
+					}},
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "i-002",
 					},
-				},
+
+					Spec: corev1.NodeSpec{
+						ProviderID: "example/i-002",
+					}},
 			}},
 			expectedMetadata: map[string]enisVolumes{
 				"i-001": {ENIs: 1, Volumes: 0},
@@ -221,13 +223,7 @@ func TestGetMetadata(t *testing.T) {
 		{
 			name:      "success: normal with one instance",
 			instances: []*types.Instance{newFakeInstance("i-001", 5, 2)},
-			nodes: &corev1.NodeList{Items: []corev1.Node{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "i-001",
-					},
-				},
-			}},
+			nodes:     defaultNode,
 			expectedMetadata: map[string]enisVolumes{
 				"i-001": {ENIs: 5, Volumes: 1},
 			},
@@ -237,13 +233,7 @@ func TestGetMetadata(t *testing.T) {
 		{
 			name:      "success: normal with one instance and add one non csi managed PV",
 			instances: []*types.Instance{newFakeInstance("i-001", 5, 2)},
-			nodes: &corev1.NodeList{Items: []corev1.Node{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "i-001",
-					},
-				},
-			}},
+			nodes:     defaultNode,
 			expectedMetadata: map[string]enisVolumes{
 				"i-001": {ENIs: 5, Volumes: 2},
 			},
@@ -262,13 +252,7 @@ func TestGetMetadata(t *testing.T) {
 		{
 			name:      "success: normal with one instance and add one csi managed PV",
 			instances: []*types.Instance{newFakeInstance("i-001", 5, 2)},
-			nodes: &corev1.NodeList{Items: []corev1.Node{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "i-001",
-					},
-				},
-			}},
+			nodes:     defaultNode,
 			expectedMetadata: map[string]enisVolumes{
 				"i-001": {ENIs: 5, Volumes: 1},
 			},
@@ -285,15 +269,9 @@ func TestGetMetadata(t *testing.T) {
 			expErr: nil,
 		},
 		{
-			name:      "error: describe instances error",
-			instances: []*types.Instance{newFakeInstance("i-001", 5, 2)},
-			nodes: &corev1.NodeList{Items: []corev1.Node{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "i-001",
-					},
-				},
-			}},
+			name:             "error: describe instances error",
+			instances:        []*types.Instance{newFakeInstance("i-001", 5, 2)},
+			nodes:            defaultNode,
 			expectedMetadata: map[string]enisVolumes{},
 			newPV:            nil,
 			expErr:           errors.New("failed to describe instances"),

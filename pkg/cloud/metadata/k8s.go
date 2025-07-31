@@ -121,14 +121,14 @@ func KubernetesAPIInstanceInfo(clientset kubernetes.Interface, ec2Labels bool) (
 		}
 
 		//TODO: need to shorten to 5 seconds later
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		backoffErr := wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
 			if enis, volumes, err = getEC2ENIsVolumes(node); err != nil {
 				klog.ErrorS(err, "Get ENI and volume labels failed, retrying...")
+				node, err = clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 				//nolint: nilerr // Want to catch retry all errs until context times out
-				node, err = clientset.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
 				if err != nil {
 					return false, nil
 				}
@@ -138,7 +138,7 @@ func KubernetesAPIInstanceInfo(clientset kubernetes.Interface, ec2Labels bool) (
 		})
 
 		if backoffErr != nil {
-			klog.ErrorS(backoffErr, "Get ENI and volume labels failed after multiple retries, falling back to Kubernetes metadata")
+			klog.ErrorS(backoffErr, "Get ENI and volume labels failed after multiple retries")
 			return nil, backoffErr
 		}
 	}
@@ -210,8 +210,8 @@ func getVolumes(node *corev1.Node) (int, error) {
 			return 0, err
 		}
 	} else {
-		klog.V(2).InfoS("num-volumes label not found on node")
-		return 0, errors.New("num-volumes label not found on node")
+		klog.V(2).InfoS("label not found on node", "node", node.Name, "label", VolumesLabel)
+		return 0, fmt.Errorf("%s label not found on node", VolumesLabel)
 	}
 	return volumes, nil
 }
@@ -226,8 +226,8 @@ func getENIs(node *corev1.Node) (int, error) {
 			return 1, err
 		}
 	} else {
-		klog.V(2).InfoS("num-ENIs label not found on node")
-		return 1, errors.New("num-ENIs label not found on node")
+		klog.V(2).InfoS("label not found on node", "node", node.Name, "label", ENIsLabel)
+		return 1, fmt.Errorf("%s label not found on node", ENIsLabel)
 	}
 	return enis, nil
 }

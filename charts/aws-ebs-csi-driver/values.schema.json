@@ -1112,36 +1112,9 @@
               "description": "Set the level of verbosity of the logs",
               "default": 4
             },
-            "leaderElection": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "enabled": {
-                  "type": "boolean",
-                  "default": false
-                }
-              }
-            },
             "env": {
               "type": "array",
               "default": []
-            },
-            "image": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "pullPolicy": {
-                  "type": "string",
-                  "default": "IfNotPresent"
-                },
-                "tag": {
-                  "type": "string"
-                },
-                "repository": {
-                  "type": "string",
-                  "default": "public.ecr.aws/ebs-csi-driver/aws-ebs-csi-driver"
-                }
-              }
             },
             "securityContext": {
               "type": "object"
