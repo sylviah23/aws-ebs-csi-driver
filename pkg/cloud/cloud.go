@@ -384,6 +384,10 @@ func newEC2Cloud(region string, awsSdkDebugLog bool, userAgentExtra string, batc
 	}
 }
 
+func (c *cloud) GetEC2() EC2API {
+	return c.ec2
+}
+
 // newBatcherManager initializes a new instance of batcherManager.
 // Each batcher's `entries` set to maximum results returned by relevant EC2 API call without pagination.
 // Each batcher's `delay` minimizes RPC latency and EC2 API calls. Tuned via scalability tests.
